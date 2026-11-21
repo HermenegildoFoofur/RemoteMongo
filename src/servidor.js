@@ -139,13 +139,17 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
 
     try {
       /* ------------------------------------------------------------- estático */
-      if (camino === '/bootstrap.min.css' || camino === '/vue.global.prod.js') {
+      // Solo lo que la web necesita: hoja de Tailwind, Vue de reserva y tipografías.
+      if (/^\/(tailwind\.css|vue\.global\.prod\.js|fuentes\/[a-z0-9._-]+\.woff2)$/.test(camino)) {
         const { readFileSync } = await import('node:fs');
-        const fichero = camino === '/bootstrap.min.css' ? 'bootstrap.min.css' : 'vue.global.prod.js';
-        const tipo = camino.endsWith('.css') ? 'text/css' : 'text/javascript';
+        const tipo = camino.endsWith('.css') ? 'text/css'
+          : camino.endsWith('.woff2') ? 'font/woff2' : 'text/javascript';
         try {
-          const contenido = readFileSync(new URL(`../web/${fichero}`, import.meta.url));
-          res.writeHead(200, { 'Content-Type': `${tipo}; charset=utf-8`, 'Cache-Control': 'public, max-age=86400' });
+          const contenido = readFileSync(new URL(`../web${camino}`, import.meta.url));
+          res.writeHead(200, {
+            'Content-Type': `${tipo}${tipo.startsWith('text/') ? '; charset=utf-8' : ''}`,
+            'Cache-Control': 'public, max-age=86400',
+          });
           return res.end(contenido);
         } catch {
           res.writeHead(404);

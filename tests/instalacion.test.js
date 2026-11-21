@@ -117,7 +117,7 @@ test('ruta de instalación: la web y la API viven donde diga el asistente', asyn
   assert.match(html, /href="salir"/);
   assert.match(html, /action="admin\/cuota"/);
   assert.match(html, /fetch\('api\/admin'/);
-  assert.match(html, /href="bootstrap.min.css"/);
+  assert.match(html, /href="tailwind.css"/);
   assert.doesNotMatch(html, /(href|action|src)="\//, 'ninguna ruta absoluta en el HTML');
 
   // API y endpoints anunciados

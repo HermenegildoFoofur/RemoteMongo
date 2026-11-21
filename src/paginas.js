@@ -1,18 +1,11 @@
-/** Páginas del servidor: instalación, entrada, panel de usuario y administración. */
-
-const CSS = `:root{color-scheme:dark}
-.mono,.font-monospace{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.tenue{color:var(--bs-secondary-color)}
-.tarjeta{background:var(--bs-body-bg);border:1px solid var(--bs-border-color);border-radius:var(--bs-border-radius-lg);padding:1.25rem;margin-bottom:1rem}
-.dato{background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color);border-radius:var(--bs-border-radius);padding:.6rem .75rem;word-break:break-all}
-.pastilla{display:inline-block;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color);border-radius:999px;padding:.1rem .6rem;font-size:.8rem;margin:0 .35rem .35rem 0}
-.pastilla.mal{background:var(--bs-danger-bg-subtle);border-color:var(--bs-danger-border-subtle);color:var(--bs-danger-text-emphasis)}
-.pastilla.bien{background:var(--bs-success-bg-subtle);border-color:var(--bs-success-border-subtle);color:var(--bs-success-text-emphasis)}
-.barra{background:var(--bs-secondary-bg);border:1px solid var(--bs-border-color);border-radius:999px;height:.6rem;overflow:hidden;margin:.5rem 0}
-.barra-llena{height:100%;background:var(--bs-primary)}
-.barra-llena.apurado{background:var(--bs-warning)}
-.barra-llena.llena{background:var(--bs-danger)}
-.paso{width:1.6rem;height:1.6rem;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--bs-primary);color:#fff;font-size:.85rem;font-weight:600}`;
+/** Páginas del servidor: instalación, entrada, paneles y pantalla de permiso.
+ *
+ *  Sin framework de componentes: Tailwind precompilado en `web/tailwind.css` y las clases
+ *  de `web/estilos.css` (.caja, .campo, .boton…), que usan variables CSS para el tema claro
+ *  y oscuro. Los paneles son apps de Vue 3 (CDN con caída local) que piden sus datos a la
+ *  API del propio servidor. Todos los enlaces internos son relativos: la web funciona en la
+ *  raíz del dominio, en una subruta o detrás de un proxy que quita el prefijo.
+ */
 
 const esc = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -24,35 +17,71 @@ const kb = (bytes) => {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 };
 
-/** Enlaces relativos: se resuelven contra la carpeta de la página.
- *
- *  Así la misma página funciona en la raíz del dominio, montada en /remotemongo o
- *  detrás de un proxy que quita el prefijo. Nada apunta fuera de donde vive.
- */
+/** Enlaces relativos a la carpeta de la página (ver cabecera). */
 const relativizar = (html) => html.replace(
   /(href|action)="\/([^"]*)"/g,
   (_, atributo, resto) => `${atributo}="${resto || '.'}"`,
 );
 
+/** Tema guardado en el navegador; se aplica antes de pintar para no parpadear. */
+const SCRIPT_TEMA = `<script>
+  (function () {
+    try {
+      var guardado = localStorage.getItem('tema') || 'sistema';
+      var oscuro = guardado === 'oscuro'
+        || (guardado === 'sistema' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = oscuro ? 'dark' : 'light';
+    } catch (e) { document.documentElement.dataset.theme = 'light'; }
+  })();
+</script>`;
+
+const SCRIPT_BOTON_TEMA = `<script>
+  (function () {
+    var boton = document.getElementById('tema');
+    if (!boton) return;
+    var pinta = function () {
+      var oscuro = document.documentElement.dataset.theme === 'dark';
+      boton.textContent = oscuro ? '☀️' : '🌙';
+      boton.setAttribute('title', oscuro ? 'Tema claro' : 'Tema oscuro');
+    };
+    pinta();
+    boton.addEventListener('click', function () {
+      var oscuro = document.documentElement.dataset.theme !== 'dark';
+      document.documentElement.dataset.theme = oscuro ? 'dark' : 'light';
+      try { localStorage.setItem('tema', oscuro ? 'oscuro' : 'claro'); } catch (e) {}
+      pinta();
+    });
+  })();
+</script>`;
+
 function pagina(titulo, cuerpo, { nav = null, raiz = '' } = {}) {
-  const html = `<!doctype html><html lang="es" data-bs-theme="dark"><head>
+  const html = `<!doctype html><html lang="es" data-theme="light" class="h-full"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
+<meta name="color-scheme" content="light dark">
 <title>${esc(titulo)} · RemoteMongo</title>
-<link rel="stylesheet" href="bootstrap.min.css"><style>${CSS}</style></head>
-<body class="bg-body-tertiary d-flex flex-column min-vh-100">
-<nav class="navbar bg-body border-bottom">
-  <div class="container">
-    <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href=".">
+<link rel="stylesheet" href="tailwind.css">
+${SCRIPT_TEMA}
+</head>
+<body class="flex min-h-full flex-col bg-fondo text-texto">
+<header class="sticky top-0 z-10 border-b border-borde bg-superficie/85 backdrop-blur">
+  <div class="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3">
+    <a href="." class="flex items-center gap-2 font-semibold tracking-tight">
       <span aria-hidden="true">🗄️</span><span>RemoteMongo</span>
     </a>
-    ${nav ? `<div class="d-flex flex-wrap justify-content-end gap-3 small">${nav}</div>` : ''}
+    <div class="flex items-center gap-3 text-sm">
+      ${nav ? `<nav class="flex flex-wrap items-center gap-3">${nav}</nav>` : ''}
+      <button id="tema" type="button" aria-label="Cambiar de tema"
+              class="rounded-lg border border-borde px-2 py-1 text-base leading-none hover:border-acento">🌙</button>
+    </div>
   </div>
-</nav>
-<main class="container flex-grow-1 py-4 py-md-5" style="max-width:920px">
+</header>
+<main class="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:py-10">
 ${cuerpo}
 </main>
-<footer class="container text-center tenue small py-4">RemoteMongo · remoteStorage sobre MongoDB</footer>
+<footer class="mx-auto w-full max-w-3xl px-4 pb-8 text-center text-xs text-tenue">
+  RemoteMongo · remoteStorage sobre MongoDB
+</footer>
+${SCRIPT_BOTON_TEMA}
 </body></html>`;
   return relativizar(html);
 }
@@ -71,119 +100,109 @@ export const redirigir = (res, destino, cabeceras = {}) => {
 export function instalar({ valores = {}, error = '', paso = 'formulario', raiz = '' } = {}) {
   if (paso === 'hecho') {
     return pagina('Instalado', `
-      <div class="text-center mb-4">
-        <div class="display-5">🎉</div>
-        <h1 class="h3 mt-2 mb-1">Ya está instalado</h1>
-        <p class="tenue mb-0">Entra con la cuenta de administración que acabas de crear.</p>
-      </div>
-      <div class="card shadow-sm">
-        <div class="card-body text-center py-4">
-          <p class="mb-3">Tu servidor remoteStorage está escuchando y con los datos cifrados.</p>
-          <a class="btn btn-primary px-4" href="/entrar">Entrar</a>
+      <div class="mx-auto max-w-md text-center">
+        <div class="text-5xl">🎉</div>
+        <h1 class="mt-3 text-2xl font-semibold">Ya está instalado</h1>
+        <p class="mt-1 text-tenue">Entra con la cuenta de administración que acabas de crear.</p>
+        <div class="caja mt-6 text-left">
+          <p class="text-sm">El servidor está escuchando y los datos se guardan cifrados.</p>
+          <a class="boton-principal mt-4 w-full" href="/entrar">Entrar</a>
         </div>
       </div>`, { raiz });
   }
 
   return pagina('Instalar', `
-    <div class="text-center mb-4 mb-md-5">
-      <div class="display-6">⚙️</div>
-      <h1 class="h3 mt-2 mb-1">Primera configuración</h1>
-      <p class="tenue mb-0">Se rellena una vez y queda guardado en el servidor.</p>
+    <div class="mb-6 text-center sm:mb-8">
+      <div class="text-4xl">⚙️</div>
+      <h1 class="mt-2 text-2xl font-semibold sm:text-3xl">Primera configuración</h1>
+      <p class="mt-1 text-sm text-tenue">Se rellena una vez y queda guardado en el servidor.</p>
     </div>
 
-    ${error ? `<div class="alert alert-danger d-flex gap-2" role="alert">
-      <span aria-hidden="true">⚠️</span><div>${esc(error)}</div></div>` : ''}
+    ${error ? `<div role="alert" class="mb-4 flex gap-2 rounded-caja border border-peligro/40 bg-peligro/10 px-4 py-3 text-sm text-peligro">
+      <span aria-hidden="true">⚠️</span><span>${esc(error)}</span></div>` : ''}
 
-    <form method="post" action="/instalar" class="row g-3 g-md-4" novalidate>
-      <div class="col-12">
-        <div class="card shadow-sm">
-          <div class="card-header bg-transparent d-flex align-items-center gap-2 fw-semibold">
-            <span class="paso">1</span> Base de datos
+    <form method="post" action="/instalar" class="space-y-4" novalidate>
+      <section class="caja">
+        <h2 class="mb-4 flex items-center gap-2 text-base font-semibold">
+          <span class="paso">1</span> Base de datos
+        </h2>
+        <div class="space-y-4">
+          <div>
+            <label class="etiqueta" for="mongoUrl">Ruta a MongoDB</label>
+            <input class="campo font-mono" id="mongoUrl" name="mongoUrl" required autocomplete="off"
+                   spellcheck="false" value="${esc(valores.mongoUrl || 'mongodb://127.0.0.1:27017')}"
+                   placeholder="mongodb://usuario:clave@127.0.0.1:27017/remotemongo?authSource=remotemongo">
+            <p class="ayuda">Con usuario y base de autenticación si los tiene. Se comprueba antes de guardar.</p>
           </div>
-          <div class="card-body row g-3">
-            <div class="col-12">
-              <label class="form-label" for="mongoUrl">Ruta a MongoDB</label>
-              <input class="form-control font-monospace" id="mongoUrl" name="mongoUrl" required
-                     autocomplete="off" spellcheck="false"
-                     value="${esc(valores.mongoUrl || 'mongodb://127.0.0.1:27017')}"
-                     placeholder="mongodb://usuario:clave@127.0.0.1:27017/remotemongo?authSource=remotemongo">
-              <div class="form-text">Con usuario y base de autenticación si los tiene. Se comprueba antes de guardar.</div>
-            </div>
-            <div class="col-12 col-sm-6 col-lg-4">
-              <label class="form-label" for="mongoDb">Base de datos</label>
-              <input class="form-control font-monospace" id="mongoDb" name="mongoDb"
-                     value="${esc(valores.mongoDb || 'remotemongo')}">
-            </div>
+          <div class="sm:max-w-xs">
+            <label class="etiqueta" for="mongoDb">Base de datos</label>
+            <input class="campo font-mono" id="mongoDb" name="mongoDb" value="${esc(valores.mongoDb || 'remotemongo')}">
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="col-12">
-        <div class="card shadow-sm">
-          <div class="card-header bg-transparent d-flex align-items-center gap-2 fw-semibold">
-            <span class="paso">2</span> Servidor
+      <section class="caja">
+        <h2 class="mb-4 flex items-center gap-2 text-base font-semibold">
+          <span class="paso">2</span> Servidor
+        </h2>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="etiqueta" for="dominio">Dominio público</label>
+            <div class="flex">
+              <span class="flex items-center rounded-l-lg border border-r-0 border-borde bg-superficie-2 px-3 text-sm text-tenue">@</span>
+              <input class="campo rounded-l-none font-mono" id="dominio" name="dominio" required
+                     value="${esc(valores.dominio || '')}" placeholder="remotemongo.eines.net">
+            </div>
+            <p class="ayuda">Lo que va detrás de la <span class="mono">@</span> de cada usuario.</p>
           </div>
-          <div class="card-body row g-3">
-            <div class="col-12 col-md-6">
-              <label class="form-label" for="dominio">Dominio público</label>
-              <div class="input-group">
-                <span class="input-group-text">@</span>
-                <input class="form-control font-monospace" id="dominio" name="dominio" required
-                       value="${esc(valores.dominio || '')}" placeholder="remotemongo.eines.net">
-              </div>
-              <div class="form-text">Lo que va detrás de la <span class="mono">@</span> de cada usuario: <span class="mono">adela@tudominio</span>.</div>
+          <div>
+            <label class="etiqueta" for="rutaBase">Ruta de instalación</label>
+            <div class="flex">
+              <span class="flex items-center rounded-l-lg border border-r-0 border-borde bg-superficie-2 px-3 text-sm text-tenue">/</span>
+              <input class="campo rounded-l-none font-mono" id="rutaBase" name="rutaBase"
+                     value="${esc((valores.rutaBase || '').replace(/^\//, ''))}" placeholder="remotemongo">
             </div>
-            <div class="col-12 col-md-6">
-              <label class="form-label" for="rutaBase">Ruta de instalación</label>
-              <div class="input-group">
-                <span class="input-group-text mono">/</span>
-                <input class="form-control font-monospace" id="rutaBase" name="rutaBase"
-                       value="${esc((valores.rutaBase || '').replace(/^\//, ''))}" placeholder="remotemongo (vacío = raíz)">
-              </div>
-              <div class="form-text">Si la publicas en <span class="mono">https://tudominio/remotemongo/</span>, escribe
-                <span class="mono">remotemongo</span>. Enlaces, API y endpoints se adaptan solos.</div>
-            </div>
-            <div class="col-12">
-              <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" name="https" id="https"
-                       ${valores.https === false ? '' : 'checked'}>
-                <label class="form-check-label" for="https">Va detrás de un proxy con TLS</label>
-              </div>
-              <div class="form-text">Recomendado: el protocolo exige HTTPS en producción.</div>
-            </div>
+            <p class="ayuda">En blanco, la raíz del dominio. Si la publicas en
+              <span class="mono">/remotemongo/</span>, escribe <span class="mono">remotemongo</span>.</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="flex items-center gap-3 text-sm">
+              <input type="checkbox" name="https" id="https" ${valores.https === false ? '' : 'checked'}
+                     class="size-4 rounded border-borde accent-[var(--tono-acento)]">
+              <span>Va detrás de un proxy con TLS</span>
+            </label>
+            <p class="ayuda">Recomendado: el protocolo exige HTTPS en producción.</p>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="col-12">
-        <div class="card shadow-sm">
-          <div class="card-header bg-transparent d-flex align-items-center gap-2 fw-semibold">
-            <span class="paso">3</span> Cuenta de administración
+      <section class="caja">
+        <h2 class="mb-4 flex items-center gap-2 text-base font-semibold">
+          <span class="paso">3</span> Cuenta de administración
+        </h2>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <label class="etiqueta" for="admin">Usuario</label>
+            <input class="campo font-mono sm:max-w-xs" id="admin" name="admin" required
+                   pattern="[a-z0-9][a-z0-9._-]{1,31}" autocomplete="username"
+                   value="${esc(valores.admin || '')}" placeholder="adela">
           </div>
-          <div class="card-body row g-3">
-            <div class="col-12 col-md-4">
-              <label class="form-label" for="admin">Usuario</label>
-              <input class="form-control font-monospace" id="admin" name="admin" required
-                     pattern="[a-z0-9][a-z0-9._-]{1,31}" autocomplete="username"
-                     value="${esc(valores.admin || '')}" placeholder="adela">
-            </div>
-            <div class="col-12 col-md-4">
-              <label class="form-label" for="clave">Contraseña</label>
-              <input class="form-control" id="clave" type="password" name="clave" required minlength="8"
-                     autocomplete="new-password">
-              <div class="form-text">Mínimo 8 caracteres.</div>
-            </div>
-            <div class="col-12 col-md-4">
-              <label class="form-label" for="clave2">Repite la contraseña</label>
-              <input class="form-control" id="clave2" type="password" name="clave2" required minlength="8"
-                     autocomplete="new-password">
-            </div>
+          <div>
+            <label class="etiqueta" for="clave">Contraseña</label>
+            <input class="campo" id="clave" type="password" name="clave" required minlength="8"
+                   autocomplete="new-password">
+            <p class="ayuda">Mínimo 8 caracteres.</p>
+          </div>
+          <div>
+            <label class="etiqueta" for="clave2">Repite la contraseña</label>
+            <input class="campo" id="clave2" type="password" name="clave2" required minlength="8"
+                   autocomplete="new-password">
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="col-12 d-grid d-sm-flex justify-content-sm-end gap-2">
-        <button class="btn btn-primary btn-lg px-4">Instalar</button>
+      <div class="flex justify-end pt-2">
+        <button class="boton-principal w-full sm:w-auto sm:px-8">Instalar</button>
       </div>
     </form>`, { raiz });
 }
@@ -191,27 +210,23 @@ export function instalar({ valores = {}, error = '', paso = 'formulario', raiz =
 /* ------------------------------------------------------------------ entrada */
 export function entrar({ error = '', abierto = true, aviso = '', raiz = '' } = {}) {
   return pagina('Entrar', `
-    <div class="row justify-content-center">
-      <div class="col-12 col-sm-9 col-md-7 col-lg-5">
-        <div class="card shadow-sm">
-          <div class="card-body p-4">
-            <h1 class="h4 mb-3">Entrar</h1>
-            ${aviso ? `<div class="alert alert-success py-2">${esc(aviso)}</div>` : ''}
-            ${error ? `<div class="alert alert-danger py-2">${esc(error)}</div>` : ''}
-            <form method="post" action="/entrar">
-              <div class="mb-3">
-                <label class="form-label" for="usuario">Usuario</label>
-                <input class="form-control font-monospace" id="usuario" name="usuario" required autocomplete="username">
-              </div>
-              <div class="mb-3">
-                <label class="form-label" for="clave">Contraseña</label>
-                <input class="form-control" id="clave" type="password" name="clave" required autocomplete="current-password">
-              </div>
-              <button class="btn btn-primary w-100">Entrar</button>
-            </form>
-            ${abierto ? '<p class="mt-3 mb-0 tenue small">¿No tienes cuenta? <a href="/alta">Crear una</a></p>' : ''}
+    <div class="mx-auto max-w-sm">
+      <h1 class="mb-4 text-2xl font-semibold">Entrar</h1>
+      <div class="caja">
+        ${aviso ? `<div class="mb-3 rounded-lg border border-exito/40 bg-exito/10 px-3 py-2 text-sm text-exito">${esc(aviso)}</div>` : ''}
+        ${error ? `<div class="mb-3 rounded-lg border border-peligro/40 bg-peligro/10 px-3 py-2 text-sm text-peligro">${esc(error)}</div>` : ''}
+        <form method="post" action="/entrar" class="space-y-4">
+          <div>
+            <label class="etiqueta" for="usuario">Usuario</label>
+            <input class="campo font-mono" id="usuario" name="usuario" required autocomplete="username">
           </div>
-        </div>
+          <div>
+            <label class="etiqueta" for="clave">Contraseña</label>
+            <input class="campo" id="clave" type="password" name="clave" required autocomplete="current-password">
+          </div>
+          <button class="boton-principal w-full">Entrar</button>
+        </form>
+        ${abierto ? '<p class="mt-4 text-sm text-tenue">¿No tienes cuenta? <a class="boton-enlace text-acento" href="/alta">Crear una</a></p>' : ''}
       </div>
     </div>`, { raiz });
 }
@@ -219,60 +234,52 @@ export function entrar({ error = '', abierto = true, aviso = '', raiz = '' } = {
 export function alta({ abierto = true, error = '', creada = null, raiz = '' } = {}) {
   if (creada) {
     return pagina('Cuenta creada', `
-      <div class="row justify-content-center">
-        <div class="col-12 col-md-9 col-lg-7">
-          <div class="card shadow-sm">
-            <div class="card-body p-4">
-              <div class="text-center mb-3"><div class="display-6">✅</div>
-                <h1 class="h4 mt-2 mb-1">Cuenta creada</h1></div>
-              <p class="tenue">Estos son tus datos. La dirección es lo que se pone en las apps.</p>
-              <label class="form-label small mb-1">Dirección</label>
-              <div class="dato mono mb-3">${esc(creada.direccion)}</div>
-              <label class="form-label small mb-1">Endpoint</label>
-              <div class="dato mono mb-4">${esc(creada.endpoint)}</div>
-              <a class="btn btn-primary" href="/panel">Ir a mi panel</a>
-            </div>
-          </div>
+      <div class="mx-auto max-w-lg">
+        <div class="mb-4 text-center">
+          <div class="text-4xl">✅</div>
+          <h1 class="mt-2 text-2xl font-semibold">Cuenta creada</h1>
+          <p class="mt-1 text-sm text-tenue">Estos son tus datos. La dirección es lo que se pone en las apps.</p>
+        </div>
+        <div class="caja">
+          <p class="etiqueta">Dirección</p>
+          <div class="dato mb-4">${esc(creada.direccion)}</div>
+          <p class="etiqueta">Endpoint</p>
+          <div class="dato mb-5">${esc(creada.endpoint)}</div>
+          <a class="boton-principal w-full" href="/panel">Ir a mi panel</a>
         </div>
       </div>`, { raiz });
   }
   if (!abierto) {
     return pagina('Registro cerrado', `
-      <div class="row justify-content-center">
-        <div class="col-12 col-md-8 col-lg-6">
-          <div class="card shadow-sm"><div class="card-body p-4 text-center">
-            <h1 class="h4">Registro cerrado</h1>
-            <p class="tenue">Este servidor no acepta cuentas nuevas ahora mismo.</p>
-            <a class="btn btn-secondary" href="/entrar">Entrar</a>
-          </div></div>
+      <div class="mx-auto max-w-md text-center">
+        <h1 class="text-2xl font-semibold">Registro cerrado</h1>
+        <p class="mt-1 text-sm text-tenue">Este servidor no acepta cuentas nuevas ahora mismo.</p>
+        <div class="caja mt-6">
+          <a class="boton-suave w-full" href="/entrar">Entrar</a>
         </div>
       </div>`, { raiz });
   }
   return pagina('Crear cuenta', `
-    <div class="row justify-content-center">
-      <div class="col-12 col-sm-9 col-md-7 col-lg-5">
-        <div class="card shadow-sm">
-          <div class="card-body p-4">
-            <h1 class="h4 mb-3">Crear cuenta</h1>
-            ${error ? `<div class="alert alert-danger py-2">${esc(error)}</div>` : ''}
-            <form method="post" action="/alta">
-              <div class="mb-3">
-                <label class="form-label" for="usuario">Usuario</label>
-                <input class="form-control font-monospace" id="usuario" name="usuario" required
-                       pattern="[a-z0-9][a-z0-9._-]{1,31}" placeholder="adela" autocomplete="username">
-                <div class="form-text">Minúsculas, números, punto, guion y guion bajo.</div>
-              </div>
-              <div class="mb-3">
-                <label class="form-label" for="clave">Contraseña</label>
-                <input class="form-control" id="clave" type="password" name="clave" required minlength="8"
-                       autocomplete="new-password">
-                <div class="form-text">Mínimo 8 caracteres.</div>
-              </div>
-              <button class="btn btn-primary w-100">Crear cuenta</button>
-            </form>
-            <p class="mt-3 mb-0 tenue small">¿Ya la tienes? <a href="/entrar">Entrar</a></p>
+    <div class="mx-auto max-w-sm">
+      <h1 class="mb-4 text-2xl font-semibold">Crear cuenta</h1>
+      <div class="caja">
+        ${error ? `<div class="mb-3 rounded-lg border border-peligro/40 bg-peligro/10 px-3 py-2 text-sm text-peligro">${esc(error)}</div>` : ''}
+        <form method="post" action="/alta" class="space-y-4">
+          <div>
+            <label class="etiqueta" for="usuario">Usuario</label>
+            <input class="campo font-mono" id="usuario" name="usuario" required
+                   pattern="[a-z0-9][a-z0-9._-]{1,31}" placeholder="adela" autocomplete="username">
+            <p class="ayuda">Minúsculas, números, punto, guion y guion bajo.</p>
           </div>
-        </div>
+          <div>
+            <label class="etiqueta" for="clave">Contraseña</label>
+            <input class="campo" id="clave" type="password" name="clave" required minlength="8"
+                   autocomplete="new-password">
+            <p class="ayuda">Mínimo 8 caracteres.</p>
+          </div>
+          <button class="boton-principal w-full">Crear cuenta</button>
+        </form>
+        <p class="mt-4 text-sm text-tenue">¿Ya la tienes? <a class="boton-enlace text-acento" href="/entrar">Entrar</a></p>
       </div>
     </div>`, { raiz });
 }
@@ -295,94 +302,93 @@ const kb = (bytes) => {
 const fecha = (s) => String(s || '').slice(0, 10);
 `;
 
-/** Panel de cada persona. Los datos llegan de /api/panel; las acciones son formularios. */
+/** Panel de cada persona. Los datos llegan de api/panel; las acciones son formularios. */
 export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
-  const nav = `${rol === 'admin' ? '<a href="/admin">Administración</a> · ' : ''}<a href="/salir">Salir</a>`;
+  const nav = `${rol === 'admin' ? '<a class="text-acento" href="/admin">Administración</a>' : ''}
+    <a class="text-acento" href="/salir">Salir</a>`;
   return pagina('Mi panel', `
     ${VUE}
     <div id="app">
-      <p v-if="!listo" class="tenue">Cargando…</p>
+      <p v-if="!listo" class="text-sm text-tenue">Cargando…</p>
       <template v-else>
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div class="mb-5 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 class="h4 mb-1">Hola, {{ usuario }}</h1>
-            <p class="tenue mb-0 small">Cada almacén es un espacio aparte: sus carpetas, sus apps y su copia.</p>
+            <h1 class="text-2xl font-semibold">Hola, {{ usuario }}</h1>
+            <p class="mt-1 text-sm text-tenue">Cada almacén es un espacio aparte: sus carpetas, sus apps y su copia.</p>
           </div>
-          <div class="text-end">
-            <div class="small tenue">Cuota de la cuenta</div>
-            <div><strong>{{ kb(usado) }}</strong> de <strong>{{ kb(cuota) }}</strong>
-              <span class="tenue">({{ pct }} %)</span></div>
-            <div class="barra" style="width:200px"><div class="barra-llena" :class="clase" :style="{ width: pct + '%' }"></div></div>
+          <div class="min-w-[200px]">
+            <div class="mb-1 text-xs uppercase tracking-wide text-tenue">Cuota de la cuenta</div>
+            <div class="text-sm"><strong>{{ kb(usado) }}</strong> de <strong>{{ kb(cuota) }}</strong>
+              <span class="text-tenue">({{ pct }} %)</span></div>
+            <div class="barra mt-1"><div class="barra-llena" :class="clase" :style="{ width: pct + '%' }"></div></div>
           </div>
         </div>
 
-        <div v-for="esp in espacios" :key="esp.espacio" class="card shadow-sm mb-3">
-          <div class="card-header bg-transparent d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <div class="d-flex align-items-center gap-2">
-              <span class="paso" aria-hidden="true">{{ esp.espacio ? '📁' : '🏠' }}</span>
+        <section v-for="esp in espacios" :key="esp.espacio" class="caja mt-4">
+          <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <span class="text-xl" aria-hidden="true">{{ esp.espacio ? '📁' : '🏠' }}</span>
               <div>
-                <div class="fw-semibold">{{ esp.espacio ? 'Almacén «' + esp.espacio + '»' : 'Almacén por defecto' }}</div>
-                <div class="mono small tenue">{{ esp.direccion }}</div>
+                <h2 class="font-semibold">{{ esp.espacio ? 'Almacén «' + esp.espacio + '»' : 'Almacén por defecto' }}</h2>
+                <p class="mono text-sm text-tenue">{{ esp.direccion }}</p>
               </div>
             </div>
-            <div class="d-flex align-items-center gap-2">
-              <span class="pastilla mono">{{ kb(esp.usado) }}</span>
+            <div class="flex items-center gap-2">
+              <span class="pastilla">{{ kb(esp.usado) }}</span>
               <form v-if="esp.espacio" method="post" action="/panel/espacio" class="m-0"
                     onsubmit="return confirm('Se borrará este almacén y todo lo que tenga dentro. ¿Seguro?')">
                 <input type="hidden" name="accion" value="borrar">
                 <input type="hidden" name="espacio" :value="esp.espacio">
-                <button class="btn btn-sm btn-outline-danger">Borrar almacén</button>
+                <button class="boton-peligro px-3 py-1 text-xs">Borrar</button>
               </form>
             </div>
           </div>
-          <div class="card-body">
-            <label class="form-label small tenue mb-1">Endpoint para las apps</label>
-            <div class="dato mono mb-3">{{ esp.endpoint }}</div>
 
-            <h2 class="h6">Aplicaciones conectadas ({{ esp.apps.length }})</h2>
-            <p v-if="!esp.apps.length" class="tenue small mb-3">Ninguna app conectada a este almacén.</p>
-            <div v-for="a in esp.apps" :key="a.id"
-                 class="d-flex justify-content-between align-items-center border-top py-2">
-              <div>
-                <strong>{{ a.app }}</strong>
+          <p class="etiqueta">Endpoint para las apps</p>
+          <div class="dato mb-5">{{ esp.endpoint }}</div>
+
+          <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-tenue">
+            Aplicaciones conectadas ({{ esp.apps.length }})</h3>
+          <p v-if="!esp.apps.length" class="mb-4 text-sm text-tenue">Ninguna app conectada a este almacén.</p>
+          <ul class="mb-5 divide-y divide-borde">
+            <li v-for="a in esp.apps" :key="a.id" class="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <strong class="text-sm">{{ a.app }}</strong>
                 <span class="pastilla mono">{{ a.scope }}</span>
-                <span class="tenue small">desde {{ fecha(a.creado) }}</span>
+                <span class="text-xs text-tenue">desde {{ fecha(a.creado) }}</span>
               </div>
               <form method="post" action="/panel/revocar" class="m-0">
                 <input type="hidden" name="id" :value="a.id">
-                <button class="btn btn-sm btn-outline-danger">Desconectar</button>
+                <button class="boton-peligro px-3 py-1 text-xs">Desconectar</button>
               </form>
-            </div>
+            </li>
+          </ul>
 
-            <h2 class="h6 mt-4">Lo que ocupa</h2>
+          <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-tenue">Lo que ocupa</h3>
+          <div class="flex flex-wrap gap-2">
             <span v-for="c in esp.categorias" :key="c.categoria" class="pastilla mono">
               {{ c.categoria }} · {{ c.documentos }} doc · {{ kb(c.bytes) }}</span>
-            <span v-if="!esp.categorias.length" class="tenue small">Sin datos guardados.</span>
-
-            <p class="mt-3 mb-0">
-              <a class="btn btn-sm btn-outline-secondary" :href="'panel/respaldo' + (esp.espacio ? '?espacio=' + esp.espacio : '')">
-                Descargar copia (JSON)</a>
-            </p>
+            <span v-if="!esp.categorias.length" class="text-sm text-tenue">Sin datos guardados.</span>
           </div>
-        </div>
 
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <h2 class="h6 mb-1">Crear otro almacén</h2>
-            <p class="tenue small">Para separar, por ejemplo, el quemo de casa del del trabajo: mismos permisos,
-              datos distintos. Su dirección sería <span class="mono">{{ usuario }}+nombre@{{ dominio }}</span>.</p>
-            <form method="post" action="/panel/espacio" class="row g-2 align-items-end">
-              <div class="col-12 col-sm-6 col-md-4">
-                <label class="form-label small" for="espacio">Nombre del almacén</label>
-                <input class="form-control font-monospace" id="espacio" name="espacio" required
-                       pattern="[a-z0-9][a-z0-9._-]{0,31}" placeholder="trabajo">
-              </div>
-              <div class="col-12 col-sm-auto">
-                <button class="btn btn-primary">Crear almacén</button>
-              </div>
-            </form>
-          </div>
-        </div>
+          <a class="boton-suave mt-4 text-xs" :href="'panel/respaldo' + (esp.espacio ? '?espacio=' + esp.espacio : '')">
+            Descargar copia (JSON)</a>
+        </section>
+
+        <section class="caja mt-4">
+          <h2 class="font-semibold">Crear otro almacén</h2>
+          <p class="mt-1 text-sm text-tenue">Para separar, por ejemplo, el quemo de casa del del trabajo: mismos
+            permisos, datos distintos. Su dirección sería
+            <span class="mono">{{ usuario }}+nombre@{{ dominio }}</span>.</p>
+          <form method="post" action="/panel/espacio" class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div class="sm:max-w-xs">
+              <label class="etiqueta" for="espacio">Nombre del almacén</label>
+              <input class="campo font-mono" id="espacio" name="espacio" required
+                     pattern="[a-z0-9][a-z0-9._-]{0,31}" placeholder="trabajo">
+            </div>
+            <button class="boton-principal">Crear almacén</button>
+          </form>
+        </section>
       </template>
     </div>
     <script>
@@ -406,104 +412,127 @@ export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
   { nav, raiz });
 }
 
-/** Administración: solo metadatos. Datos de /api/admin; acciones por formulario. */
+/** Administración: solo metadatos. Datos de api/admin; acciones por formulario. */
 export function panelAdmin({ error = '', raiz = '' } = {}) {
   return pagina('Administración', `
     ${VUE}
     <div id="app">
-      <p v-if="!listo" class="tenue">Cargando…</p>
+      <p v-if="!listo" class="text-sm text-tenue">Cargando…</p>
       <template v-else>
-        <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
-        <div class="tarjeta">
-          <h1>Administración</h1>
-          <p class="tenue">Esto es solo <strong>metadatos</strong>: apps conectadas y espacio ocupado.
-            El contenido de las cuentas no se puede leer desde aquí.</p>
-          <div class="table-responsive">
-          <table class="table table-sm align-middle">
-            <thead><tr><th>Usuario</th><th>Estado</th><th class="text-end">Apps</th>
-              <th class="text-end">Ocupa / cuota</th><th></th></tr></thead>
+        <div class="mb-5">
+          <h1 class="text-2xl font-semibold">Administración</h1>
+          <p class="mt-1 text-sm text-tenue">Esto es solo <strong>metadatos</strong>: apps conectadas y espacio
+            ocupado. El contenido de las cuentas no se puede leer desde aquí.</p>
+        </div>
+
+        <div v-if="error" class="mb-4 rounded-lg border border-peligro/40 bg-peligro/10 px-3 py-2 text-sm text-peligro">
+          {{ error }}</div>
+
+        <section class="caja overflow-x-auto">
+          <table class="tabla">
+            <thead>
+              <tr><th>Usuario</th><th>Estado</th><th class="text-right">Apps</th>
+                <th class="text-right">Ocupa / cuota</th><th></th></tr>
+            </thead>
             <tbody>
               <template v-for="u in usuarios" :key="u.usuario">
                 <tr>
-                  <td class="mono">{{ u.usuario }}<span v-if="u.rol === 'admin'" class="pastilla">admin</span></td>
-                  <td><span class="pastilla" :class="u.activo === false ? 'mal' : 'bien'">{{ u.activo === false ? 'desactivada' : 'activa' }}</span></td>
-                  <td class="text-end">{{ u.apps.length }}</td>
-                  <td class="text-end mono">{{ kb(u.totalBytes) }} de {{ kb(u.cuota) }}
-                    <form method="post" action="/admin/cuota" class="m-0 d-inline-flex gap-1 mt-1">
-                      <input type="hidden" name="usuario" :value="u.usuario">
-                      <input class="form-control form-control-sm mono text-end" style="width:80px" name="mb"
-                             inputmode="decimal" :placeholder="u.cuotaPropia ? 'base' : Math.round(u.cuota / 1048576)"
-                             title="Cuota en MB. Vacío o «base» = la cuota del servidor">
-                      <button class="btn btn-sm btn-outline-secondary">MB</button>
-                    </form>
-                    <div class="tenue" style="font-size:.75rem">{{ u.cuotaPropia ? 'cuota propia' : 'cuota del servidor' }}</div>
+                  <td class="font-mono">
+                    {{ u.usuario }}
+                    <span v-if="u.rol === 'admin'" class="pastilla ml-1">admin</span>
                   </td>
-                  <td class="text-end">
-                    <form method="post" action="/admin/estado" class="m-0 d-inline">
+                  <td>
+                    <span class="pastilla" :class="u.activo === false ? 'pastilla-mal' : 'pastilla-bien'">
+                      {{ u.activo === false ? 'desactivada' : 'activa' }}</span>
+                  </td>
+                  <td class="text-right">{{ u.apps.length }}</td>
+                  <td class="text-right">
+                    <div class="font-mono text-xs">{{ kb(u.totalBytes) }} de {{ kb(u.cuota) }}</div>
+                    <form method="post" action="/admin/cuota" class="mt-1 flex items-center justify-end gap-1">
+                      <input type="hidden" name="usuario" :value="u.usuario">
+                      <input class="campo w-20 px-2 py-1 text-right text-xs" name="mb" inputmode="decimal"
+                             :placeholder="u.cuotaPropia ? 'base' : Math.round(u.cuota / 1048576)"
+                             title="Cuota en MB. Vacío o «base» = la cuota del servidor">
+                      <button class="boton-suave px-2 py-1 text-xs">MB</button>
+                    </form>
+                    <div class="mt-1 text-[0.7rem] text-tenue">
+                      {{ u.cuotaPropia ? 'cuota propia' : 'cuota del servidor' }}</div>
+                  </td>
+                  <td class="text-right">
+                    <form method="post" action="/admin/estado" class="m-0">
                       <input type="hidden" name="usuario" :value="u.usuario">
                       <input type="hidden" name="activo" :value="u.activo === false ? '1' : '0'">
-                      <button class="btn btn-sm btn-outline-secondary">{{ u.activo === false ? 'Activar' : 'Desactivar' }}</button>
+                      <button class="boton-suave px-2 py-1 text-xs">
+                        {{ u.activo === false ? 'Activar' : 'Desactivar' }}</button>
                     </form>
                   </td>
                 </tr>
                 <tr>
-                  <td colspan="5" class="pt-0">
-                    <div class="tenue small mb-1">Almacenes:
+                  <td colspan="5" class="border-t-0 pt-0">
+                    <div class="mb-1 text-xs text-tenue">Almacenes:
                       <span v-for="e in u.espacios" :key="e.espacio" class="pastilla mono">
                         {{ e.espacio || '(por defecto)' }} · {{ kb(e.usado) }} · {{ e.apps }} app(s)</span>
                     </div>
-                    <div v-if="u.apps.length" class="tenue small">Apps:
-                      <span v-for="a in u.apps" :key="a.id" class="pastilla">{{ a.app }} · {{ a.scope }}
-                        <form method="post" action="/admin/revocar" class="d-inline m-0">
+                    <div v-if="u.apps.length" class="text-xs text-tenue">Apps:
+                      <span v-for="a in u.apps" :key="a.id" class="pastilla">
+                        {{ a.app }} · {{ a.scope }}
+                        <form method="post" action="/admin/revocar" class="ml-1 inline">
                           <input type="hidden" name="usuario" :value="u.usuario">
                           <input type="hidden" name="id" :value="a.id">
-                          <button class="btn btn-link p-0 align-baseline" style="font-size:.8rem">desconectar</button>
+                          <button class="boton-enlace text-peligro">desconectar</button>
                         </form>
                       </span>
                     </div>
                   </td>
                 </tr>
               </template>
-              <tr v-if="!usuarios.length"><td colspan="5" class="tenue">Sin cuentas</td></tr>
+              <tr v-if="!usuarios.length"><td colspan="5" class="text-tenue">Sin cuentas</td></tr>
             </tbody>
           </table>
-          </div>
-        </div>
-        <div class="tarjeta">
-          <h2>Cuota de espacio por defecto</h2>
-          <p class="tenue">Lo que puede ocupar cada cuenta que no tenga una cuota propia.
+        </section>
+
+        <section class="caja mt-4">
+          <h2 class="font-semibold">Cuota de espacio por defecto</h2>
+          <p class="mt-1 text-sm text-tenue">Lo que puede ocupar cada cuenta que no tenga una cuota propia.
             Ahora mismo: <strong>{{ kb(config.cuotaBase) }}</strong>.</p>
-          <form method="post" action="/admin/cuota-base" class="d-flex gap-2 align-items-end">
-            <div><label class="form-label" style="font-size:.85rem">MB por cuenta</label>
-              <input class="form-control mono" name="mb" inputmode="decimal" style="width:120px"
-                     :value="Math.round(config.cuotaBase / 1048576)" required></div>
-            <button class="btn btn-sm btn-outline-secondary mb-1">Guardar</button>
+          <form method="post" action="/admin/cuota-base" class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div class="sm:max-w-[10rem]">
+              <label class="etiqueta" for="mb">MB por cuenta</label>
+              <input class="campo font-mono" id="mb" name="mb" inputmode="decimal"
+                     :value="Math.round(config.cuotaBase / 1048576)" required>
+            </div>
+            <button class="boton-suave">Guardar</button>
           </form>
-          <p class="tenue mt-2 mb-0" style="font-size:.85rem">Cambiarla no borra nada: si alguien ya ocupa
-            más, no podrá guardar cosas nuevas hasta bajar de su nuevo límite.</p>
-        </div>
-        <div class="tarjeta">
-          <h2>Cifrado en reposo</h2>
+          <p class="ayuda mt-2">Cambiarla no borra nada: si alguien ya ocupa más, no podrá guardar cosas
+            nuevas hasta bajar de su nuevo límite.</p>
+        </section>
+
+        <section class="caja mt-4">
+          <h2 class="font-semibold">Cifrado en reposo</h2>
           <template v-if="config.cifrado">
-            <p class="mb-1"><span class="pastilla bien">activo</span> AES-256-GCM</p>
-            <p class="tenue mb-0" style="font-size:.85rem">Los cuerpos se guardan cifrados en MongoDB con una
-              clave que vive en <span class="mono">state/instalacion.json</span>, fuera de la base. Quien tenga un
-              dump o un backup de Mongo ve rutas, tamaños y fechas, pero <strong>no el contenido</strong>.</p>
+            <p class="mt-2"><span class="pastilla pastilla-bien">activo</span>
+              <span class="ml-1 text-sm">AES-256-GCM</span></p>
+            <p class="mt-2 text-sm text-tenue">Los cuerpos se guardan cifrados en MongoDB con una clave que vive en
+              <span class="mono">state/instalacion.json</span>, fuera de la base. Quien tenga un dump o un backup de
+              Mongo ve rutas, tamaños y fechas, pero <strong class="text-texto">no el contenido</strong>.</p>
           </template>
           <template v-else>
-            <p class="mb-1"><span class="pastilla mal">inactivo</span></p>
-            <p class="tenue mb-0" style="font-size:.85rem">Sin clave los cuerpos se guardan en claro. Define
+            <p class="mt-2"><span class="pastilla pastilla-mal">inactivo</span></p>
+            <p class="mt-2 text-sm text-tenue">Sin clave los cuerpos se guardan en claro. Define
               <span class="mono">RM_CLAVE_CIFRADO</span> (32 bytes en base64) o instala desde cero.</p>
           </template>
-        </div>
-        <div class="tarjeta">
-          <h2>Registro</h2>
-          <p class="tenue">Ahora mismo: <strong>{{ config.registroAbierto ? 'abierto' : 'cerrado' }}</strong></p>
-          <form method="post" action="/admin/registro" class="m-0">
+        </section>
+
+        <section class="caja mt-4">
+          <h2 class="font-semibold">Registro</h2>
+          <p class="mt-1 text-sm text-tenue">Ahora mismo:
+            <strong>{{ config.registroAbierto ? 'abierto' : 'cerrado' }}</strong></p>
+          <form method="post" action="/admin/registro" class="mt-4">
             <input type="hidden" name="abierto" :value="config.registroAbierto ? '0' : '1'">
-            <button class="btn btn-sm btn-outline-secondary">{{ config.registroAbierto ? 'Cerrar el registro' : 'Abrir el registro' }}</button>
+            <button class="boton-suave">
+              {{ config.registroAbierto ? 'Cerrar el registro' : 'Abrir el registro' }}</button>
           </form>
-        </div>
+        </section>
       </template>
     </div>
     <script>
@@ -520,53 +549,47 @@ export function panelAdmin({ error = '', raiz = '' } = {}) {
       },
     }).mount('#app');
     </script>`,
-  { nav: '<a href="/panel">Mi panel</a> · <a href="/salir">Salir</a>', raiz });
+  { nav: '<a class="text-acento" href="/panel">Mi panel</a><a class="text-acento" href="/salir">Salir</a>', raiz });
 }
 
 /* ------------------------------------------------------------- permiso OAuth */
 export function permiso({ usuario, scope, permisos, app, redirect, estado, reto, metodo, raiz = '' }) {
   return pagina('Permiso', `
-    <div class="row justify-content-center">
-      <div class="col-12 col-md-9 col-lg-7">
-        <div class="card shadow-sm">
-          <div class="card-body p-4">
-            <div class="d-flex align-items-center gap-2 mb-2">
-              <span class="paso" aria-hidden="true">🔑</span>
-              <h1 class="h4 mb-0">Permiso para ${esc(app)}</h1>
-            </div>
-            <p class="tenue">La aplicación quiere acceder a tu cuenta <strong>${esc(usuario)}</strong> en:</p>
-            <ul class="list-group list-group-flush mb-3">
-              ${permisos.map((p) => `<li class="list-group-item bg-transparent mono px-0">${esc(p)}</li>`).join('')}
-            </ul>
-            <form method="post" action="/oauth/${esc(usuario)}">
-              <input type="hidden" name="scope" value="${esc(scope)}">
-              <input type="hidden" name="redirect" value="${esc(redirect)}">
-              <input type="hidden" name="estado" value="${esc(estado)}">
-              <input type="hidden" name="reto" value="${esc(reto)}">
-              <input type="hidden" name="metodo" value="${esc(metodo)}">
-              <input type="hidden" name="app" value="${esc(app)}">
-              <label class="form-label" for="clave">Tu contraseña</label>
-              <input class="form-control mb-3" id="clave" type="password" name="clave" required autocomplete="current-password">
-              <div class="d-flex gap-2">
-                <button class="btn btn-primary">Permitir</button>
-                <a class="btn btn-outline-secondary" href="/">Cancelar</a>
-              </div>
-            </form>
+    <div class="mx-auto max-w-lg">
+      <div class="caja">
+        <h1 class="text-xl font-semibold">Permiso para ${esc(app)}</h1>
+        <p class="mt-1 text-sm text-tenue">La aplicación quiere acceder a tu cuenta
+          <strong class="text-texto">${esc(usuario)}</strong> en:</p>
+        <ul class="mt-3 space-y-1">
+          ${permisos.map((p) => `<li class="mono rounded-lg bg-superficie-2 px-3 py-2 text-sm">${esc(p)}</li>`).join('')}
+        </ul>
+        <form method="post" action="/oauth/${esc(usuario)}" class="mt-5 space-y-4">
+          <input type="hidden" name="scope" value="${esc(scope)}">
+          <input type="hidden" name="redirect" value="${esc(redirect)}">
+          <input type="hidden" name="estado" value="${esc(estado)}">
+          <input type="hidden" name="reto" value="${esc(reto)}">
+          <input type="hidden" name="metodo" value="${esc(metodo)}">
+          <input type="hidden" name="app" value="${esc(app)}">
+          <div>
+            <label class="etiqueta" for="clave">Tu contraseña</label>
+            <input class="campo" id="clave" type="password" name="clave" required autocomplete="current-password">
           </div>
-        </div>
+          <div class="flex flex-col gap-2 sm:flex-row">
+            <button class="boton-principal flex-1">Permitir</button>
+            <a class="boton-suave" href="/">Cancelar</a>
+          </div>
+        </form>
       </div>
     </div>`, { raiz });
 }
 
 export function avisoPagina({ titulo, texto, enlace = '/', boton = 'Volver', raiz = '' }) {
   return pagina(titulo, `
-    <div class="row justify-content-center">
-      <div class="col-12 col-md-8 col-lg-6">
-        <div class="card shadow-sm"><div class="card-body p-4 text-center">
-          <h1 class="h4">${esc(titulo)}</h1>
-          <p class="tenue">${esc(texto)}</p>
-          <a class="btn btn-primary" href="${enlace}">${boton}</a>
-        </div></div>
+    <div class="mx-auto max-w-md">
+      <div class="caja text-center">
+        <h1 class="text-xl font-semibold">${esc(titulo)}</h1>
+        <p class="mt-1 text-sm text-tenue">${esc(texto)}</p>
+        <a class="boton-principal mt-5 w-full" href="${enlace}">${boton}</a>
       </div>
     </div>`, { raiz });
 }

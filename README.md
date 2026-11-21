@@ -163,9 +163,20 @@ escribe en lo que devuelve.
 
 La web (`/panel` y `/admin`) es **Vue 3 sin compilar**: el HTML lleva la plantilla y el
 servidor sirve los datos por `/api/*`. Vue se carga desde CDN (`cdn.jsdelivr.net`) y, si no hay
-red, cae a `web/vue.global.prod.js`, que va en el repo. Bootstrap 5 también se sirve local.
-Las acciones (desconectar app, activar cuenta, cuota) siguen siendo formularios POST normales:
-funcionan aunque el navegador no ejecute JavaScript.
+red, cae a `web/vue.global.prod.js`, que va en el repo. Las acciones (desconectar app, activar
+cuenta, cuota) siguen siendo formularios POST normales: funcionan aunque el navegador no
+ejecute JavaScript.
+
+El estilo es **Tailwind CSS 4** con una paleta de variables CSS (estilo Apple, la de MongoKu) y
+tema **claro/oscuro** que se recuerda en el navegador. El CSS se entrega **ya compilado**
+(`web/tailwind.css`): el servidor no compila nada. Para regenerarlo tras cambiar las plantillas:
+
+```bash
+npm i -D tailwindcss @tailwindcss/cli
+npx @tailwindcss/cli -i web/estilos.css -o web/tailwind.css --minify
+```
+
+Las tipografías (Cuprum y Rajdhani) van en `web/fuentes/`, servidas desde el propio servidor.
 
 Los **permisos** son por categoría (la primera carpeta): `quemo:rw`, `secretos:rw`, `*:r`.
 Todo lleva **CORS abierto**, ETags para no pisar cambios, y los listados en JSON-LD como pide
