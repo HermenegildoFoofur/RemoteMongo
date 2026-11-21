@@ -24,21 +24,26 @@ const kb = (bytes) => {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 };
 
-/** Pone delante la ruta de instalación a todo lo que empieza por «/». */
-const prefijar = (html, raiz) => html
-  .replace(/(href|action|src)="\//g, `$1="${raiz}/`)
-  .replace(/fetch\('\//g, `fetch('${raiz}/`);
+/** Enlaces relativos: se resuelven contra la carpeta de la página.
+ *
+ *  Así la misma página funciona en la raíz del dominio, montada en /remotemongo o
+ *  detrás de un proxy que quita el prefijo. Nada apunta fuera de donde vive.
+ */
+const relativizar = (html) => html.replace(
+  /(href|action)="\/([^"]*)"/g,
+  (_, atributo, resto) => `${atributo}="${resto || '.'}"`,
+);
 
 function pagina(titulo, cuerpo, { nav = null, raiz = '' } = {}) {
   const html = `<!doctype html><html lang="es" data-bs-theme="dark"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>${esc(titulo)} · RemoteMongo</title>
-<link rel="stylesheet" href="/bootstrap.min.css"><style>${CSS}</style></head>
+<link rel="stylesheet" href="bootstrap.min.css"><style>${CSS}</style></head>
 <body class="bg-body-tertiary d-flex flex-column min-vh-100">
 <nav class="navbar bg-body border-bottom">
   <div class="container">
-    <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href="/">
+    <a class="navbar-brand d-flex align-items-center gap-2 fw-semibold" href=".">
       <span aria-hidden="true">🗄️</span><span>RemoteMongo</span>
     </a>
     ${nav ? `<div class="d-flex flex-wrap justify-content-end gap-3 small">${nav}</div>` : ''}
@@ -49,7 +54,7 @@ ${cuerpo}
 </main>
 <footer class="container text-center tenue small py-4">RemoteMongo · remoteStorage sobre MongoDB</footer>
 </body></html>`;
-  return raiz ? prefijar(html, raiz) : html;
+  return relativizar(html);
 }
 
 export function respuesta(res, codigo, html, cabeceras = {}) {
@@ -277,7 +282,7 @@ export function alta({ abierto = true, error = '', creada = null, raiz = '' } = 
 /** Vue 3 desde CDN; si no hay red, cae al fichero que sirve el propio servidor. */
 const VUE_CDN = 'https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js';
 const VUE = `<script src="${VUE_CDN}"></script>
-<script>window.Vue || document.write('<script src="/vue.global.prod.js"><\\/script>');</script>`;
+<script>window.Vue || document.write('<script src="vue.global.prod.js"><\\/script>');</script>`;
 
 /** Lo que comparten las dos plantillas: tamaño legible y fecha corta. */
 const AYUDAS = `
@@ -348,7 +353,7 @@ export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
       methods: { kb, fecha },
       async mounted() {
         try {
-          const r = await fetch('/api/panel', { credentials: 'same-origin' });
+          const r = await fetch('api/panel', { credentials: 'same-origin' });
           if (r.ok) Object.assign(this, await r.json());
         } finally { this.listo = true; }
       },
@@ -461,7 +466,7 @@ export function panelAdmin({ error = '', raiz = '' } = {}) {
       methods: { kb },
       async mounted() {
         try {
-          const r = await fetch('/api/admin', { credentials: 'same-origin' });
+          const r = await fetch('api/admin', { credentials: 'same-origin' });
           if (r.ok) { const d = await r.json(); this.usuarios = d.usuarios; this.config = d.config; }
         } finally { this.listo = true; }
       },

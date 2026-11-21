@@ -111,12 +111,14 @@ test('ruta de instalación: la web y la API viven donde diga el asistente', asyn
   assert.equal(entrada.headers.get('location'), '/almacen/admin');
   const cookie = (entrada.headers.get('set-cookie') || '').split(';')[0];
 
-  // la web lleva la ruta en todos los enlaces y en el fetch de Vue
+  // la web no tiene rutas absolutas: todo es relativo a la página
   const html = await (await fetch(`${base}/almacen/admin`, { headers: { cookie } })).text();
-  assert.match(html, /href="\/almacen\/panel"/);
-  assert.match(html, /href="\/almacen\/salir"/);
-  assert.match(html, /action="\/almacen\/admin\/cuota"/);
-  assert.match(html, /fetch\('\/almacen\/api\/admin'/);
+  assert.match(html, /href="panel"/);
+  assert.match(html, /href="salir"/);
+  assert.match(html, /action="admin\/cuota"/);
+  assert.match(html, /fetch\('api\/admin'/);
+  assert.match(html, /href="bootstrap.min.css"/);
+  assert.doesNotMatch(html, /(href|action|src)="\//, 'ninguna ruta absoluta en el HTML');
 
   // API y endpoints anunciados
   const api = await fetch(`${base}/almacen/api/admin`, { headers: { cookie } });
