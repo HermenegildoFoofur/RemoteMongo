@@ -143,133 +143,199 @@ export function alta({ abierto = true, error = '', creada = null } = {}) {
   </div>`);
 }
 
-/* ------------------------------------------------------------ panel usuario */
-export function panelUsuario({ usuario, rol, dominio, endpoint, metadatos, cuota = 0 }) {
-  const usado = Number(metadatos.totalBytes) || 0;
-  const tope = Number(cuota) || 0;
-  const pct = tope > 0 ? Math.min(100, Math.round((usado / tope) * 100)) : 0;
-  const resto = Math.max(0, tope - usado);
-  const clase = pct >= 100 ? ' llena' : pct >= 90 ? ' apurado' : '';
-  const apps = metadatos.apps.length
-    ? metadatos.apps.map((a) => `<div class="d-flex justify-content-between align-items-center border-top pt-2 mt-2">
-        <div><strong>${esc(a.app)}</strong><br><span class="pastilla mono">${esc(a.scope)}</span>
-        <span class="tenue" style="font-size:.8rem">desde ${esc((a.creado || '').slice(0, 10))}</span></div>
-        <form method="post" action="/panel/revocar" class="m-0">
-          <input type="hidden" name="id" value="${esc(a.id)}">
-          <button class="btn btn-sm btn-outline-danger">Desconectar</button>
-        </form>
-      </div>`).join('')
-    : '<p class="tenue mt-2">Ninguna app conectada todavía.</p>';
+/* ------------------------------------------------- paneles (Vue 3, sin build) */
 
-  const categorias = metadatos.categorias.length
-    ? metadatos.categorias.map((c) => `<span class="pastilla mono">${esc(c.categoria)} · ${c.documentos} doc · ${kb(c.bytes)}</span>`).join('')
-    : '<span class="tenue">Sin datos guardados.</span>';
+/** Vue 3 desde CDN; si no hay red, cae al fichero que sirve el propio servidor. */
+const VUE_CDN = 'https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js';
+const VUE = `<script src="${VUE_CDN}"></script>
+<script>window.Vue || document.write('<script src="/vue.global.prod.js"><\\/script>');</script>`;
 
+/** Lo que comparten las dos plantillas: tamaño legible y fecha corta. */
+const AYUDAS = `
+const kb = (bytes) => {
+  const b = Number(bytes) || 0;
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' kB';
+  return (b / 1024 / 1024).toFixed(2) + ' MB';
+};
+const fecha = (s) => String(s || '').slice(0, 10);
+`;
+
+/** Panel de cada persona. Los datos llegan de /api/panel; las acciones son formularios. */
+export function panelUsuario({ rol = 'usuario' } = {}) {
+  const nav = `${rol === 'admin' ? '<a href="/admin">Administración</a> · ' : ''}<a href="/salir">Salir</a>`;
   return pagina('Mi panel', `
-    <div class="tarjeta">
-      <h1>Hola, ${esc(usuario)}</h1>
-      <p class="tenue">Tu dirección es lo que pones en las apps:</p>
-      <div class="dato mono">${esc(usuario)}@${esc(dominio)}</div>
-      <p class="mt-2 mb-1 tenue">Y tu endpoint, para apps que no hablan WebFinger:</p>
-      <div class="dato mono">${esc(endpoint)}</div>
+    ${VUE}
+    <div id="app">
+      <p v-if="!listo" class="tenue">Cargando…</p>
+      <template v-else>
+        <div class="tarjeta">
+          <h1>Hola, {{ usuario }}</h1>
+          <p class="tenue">Tu dirección es lo que pones en las apps:</p>
+          <div class="dato mono">{{ usuario }}@{{ dominio }}</div>
+          <p class="mt-2 mb-1 tenue">Y tu endpoint, para apps que no hablan WebFinger:</p>
+          <div class="dato mono">{{ endpoint }}</div>
+        </div>
+        <div class="tarjeta">
+          <h2>Aplicaciones conectadas ({{ apps.length }})</h2>
+          <p v-if="!apps.length" class="tenue mt-2">Ninguna app conectada todavía.</p>
+          <div v-for="a in apps" :key="a.id"
+               class="d-flex justify-content-between align-items-center border-top pt-2 mt-2">
+            <div>
+              <strong>{{ a.app }}</strong><br>
+              <span class="pastilla mono">{{ a.scope }}</span>
+              <span class="tenue" style="font-size:.8rem">desde {{ fecha(a.creado) }}</span>
+            </div>
+            <form method="post" action="/panel/revocar" class="m-0">
+              <input type="hidden" name="id" :value="a.id">
+              <button class="btn btn-sm btn-outline-danger">Desconectar</button>
+            </form>
+          </div>
+        </div>
+        <div class="tarjeta">
+          <h2>Lo que ocupas</h2>
+          <p class="mb-1"><strong>{{ kb(usado) }}</strong> de <strong>{{ kb(cuota) }}</strong>
+            <span class="tenue">({{ pct }} %)</span></p>
+          <div class="barra"><div class="barra-llena" :class="clase" :style="{ width: pct + '%' }"></div></div>
+          <p class="tenue" style="font-size:.85rem">Te quedan <strong>{{ kb(resto) }}</strong>.
+            Si se llena, las apps reciben un aviso y no se guarda nada más hasta que borres algo.</p>
+          <span v-for="c in categorias" :key="c.categoria" class="pastilla mono">
+            {{ c.categoria }} · {{ c.documentos }} doc · {{ kb(c.bytes) }}</span>
+          <span v-if="!categorias.length" class="tenue">Sin datos guardados.</span>
+          <p class="mt-3 mb-0"><a class="btn btn-sm btn-outline-secondary" href="/panel/respaldo">Descargar copia (JSON)</a></p>
+        </div>
+      </template>
     </div>
-    <div class="tarjeta">
-      <h2>Aplicaciones conectadas (${metadatos.apps.length})</h2>
-      ${apps}
-    </div>
-    <div class="tarjeta">
-      <h2>Lo que ocupas</h2>
-      <p class="mb-1"><strong>${kb(usado)}</strong> de <strong>${kb(tope)}</strong>
-        <span class="tenue">(${pct} %)</span></p>
-      <div class="barra"><div class="barra-llena${clase}" style="width:${pct}%"></div></div>
-      <p class="tenue" style="font-size:.85rem">Te quedan <strong>${kb(resto)}</strong>.
-        Si se llena, las apps reciben un aviso y no se guarda nada más hasta que borres algo.</p>
-      ${categorias}
-      <p class="mt-3 mb-0"><a class="btn btn-sm btn-outline-secondary" href="/panel/respaldo">Descargar copia (JSON)</a></p>
-    </div>`,
-  { nav: `${rol === 'admin' ? '<a href="/admin">Administración</a> · ' : ''}<a href="/salir">Salir</a>` });
+    <script>
+    ${AYUDAS}
+    Vue.createApp({
+      data: () => ({ listo: false, usuario: '', rol: 'usuario', dominio: '', endpoint: '',
+        apps: [], categorias: [], usado: 0, cuota: 0 }),
+      computed: {
+        pct() { return this.cuota > 0 ? Math.min(100, Math.round((this.usado / this.cuota) * 100)) : 0; },
+        resto() { return Math.max(0, this.cuota - this.usado); },
+        clase() { return this.pct >= 100 ? 'llena' : this.pct >= 90 ? 'apurado' : ''; },
+      },
+      methods: { kb, fecha },
+      async mounted() {
+        try {
+          const r = await fetch('/api/panel', { credentials: 'same-origin' });
+          if (r.ok) Object.assign(this, await r.json());
+        } finally { this.listo = true; }
+      },
+    }).mount('#app');
+    </script>`,
+  { nav });
 }
 
-/* --------------------------------------------------------- administración */
-export function panelAdmin({ usuarios, config, mensaje = '', error = '' }) {
-  const filas = usuarios.map((u) => `
-    <tr>
-      <td class="mono">${esc(u.usuario)}${u.rol === 'admin' ? ' <span class="pastilla">admin</span>' : ''}</td>
-      <td>${u.activo === false ? '<span class="pastilla mal">desactivada</span>' : '<span class="pastilla bien">activa</span>'}</td>
-      <td class="text-end">${u.apps.length}</td>
-      <td class="text-end mono">${kb(u.totalBytes)} de ${kb(u.cuota)}
-        <form method="post" action="/admin/cuota" class="m-0 d-inline-flex gap-1 mt-1">
-          <input type="hidden" name="usuario" value="${esc(u.usuario)}">
-          <input class="form-control form-control-sm mono text-end" style="width:80px" name="mb"
-                 inputmode="decimal" placeholder="${u.cuotaPropia ? 'base' : (u.cuota / 1048576).toFixed(0)}"
-                 title="Cuota en MB. Vacío o «base» = la cuota del servidor">
-          <button class="btn btn-sm btn-outline-secondary">MB</button>
-        </form>
-        <div class="tenue" style="font-size:.75rem">${u.cuotaPropia ? 'cuota propia' : 'cuota del servidor'}</div>
-      </td>
-      <td class="text-end">
-        <form method="post" action="/admin/estado" class="m-0 d-inline">
-          <input type="hidden" name="usuario" value="${esc(u.usuario)}">
-          <input type="hidden" name="activo" value="${u.activo === false ? '1' : '0'}">
-          <button class="btn btn-sm btn-outline-secondary">${u.activo === false ? 'Activar' : 'Desactivar'}</button>
-        </form>
-      </td>
-    </tr>
-    ${u.apps.length ? `<tr><td colspan="5" class="pt-0">
-      <div class="tenue" style="font-size:.85rem">Apps: ${u.apps.map((a) => `
-        <span class="pastilla">${esc(a.app)} · ${esc(a.scope)}
-          <form method="post" action="/admin/revocar" class="d-inline m-0">
-            <input type="hidden" name="usuario" value="${esc(u.usuario)}">
-            <input type="hidden" name="id" value="${esc(a.id)}">
-            <button class="btn btn-link p-0 align-baseline" style="font-size:.8rem">desconectar</button>
-          </form>
-        </span>`).join('')}</div>
-    </td></tr>` : ''}`).join('');
-
+/** Administración: solo metadatos. Datos de /api/admin; acciones por formulario. */
+export function panelAdmin({ error = '' } = {}) {
   return pagina('Administración', `
-    ${mensaje ? `<div class="alert alert-success py-2">${esc(mensaje)}</div>` : ''}
-    ${error ? `<div class="alert alert-danger py-2">${esc(error)}</div>` : ''}
-    <div class="tarjeta">
-      <h1>Administración</h1>
-      <p class="tenue">Esto es solo <strong>metadatos</strong>: apps conectadas y espacio ocupado.
-      El contenido de las cuentas no se puede leer desde aquí.</p>
-      <table class="table table-dark table-sm align-middle">
-        <thead><tr><th>Usuario</th><th>Estado</th><th class="text-end">Apps</th><th class="text-end">Ocupa / cuota</th><th></th></tr></thead>
-        <tbody>${filas || '<tr><td colspan="5" class="tenue">Sin cuentas</td></tr>'}</tbody>
-      </table>
+    ${VUE}
+    <div id="app">
+      <p v-if="!listo" class="tenue">Cargando…</p>
+      <template v-else>
+        <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
+        <div class="tarjeta">
+          <h1>Administración</h1>
+          <p class="tenue">Esto es solo <strong>metadatos</strong>: apps conectadas y espacio ocupado.
+            El contenido de las cuentas no se puede leer desde aquí.</p>
+          <table class="table table-dark table-sm align-middle">
+            <thead><tr><th>Usuario</th><th>Estado</th><th class="text-end">Apps</th>
+              <th class="text-end">Ocupa / cuota</th><th></th></tr></thead>
+            <tbody>
+              <template v-for="u in usuarios" :key="u.usuario">
+                <tr>
+                  <td class="mono">{{ u.usuario }}<span v-if="u.rol === 'admin'" class="pastilla">admin</span></td>
+                  <td><span class="pastilla" :class="u.activo === false ? 'mal' : 'bien'">{{ u.activo === false ? 'desactivada' : 'activa' }}</span></td>
+                  <td class="text-end">{{ u.apps.length }}</td>
+                  <td class="text-end mono">{{ kb(u.totalBytes) }} de {{ kb(u.cuota) }}
+                    <form method="post" action="/admin/cuota" class="m-0 d-inline-flex gap-1 mt-1">
+                      <input type="hidden" name="usuario" :value="u.usuario">
+                      <input class="form-control form-control-sm mono text-end" style="width:80px" name="mb"
+                             inputmode="decimal" :placeholder="u.cuotaPropia ? 'base' : Math.round(u.cuota / 1048576)"
+                             title="Cuota en MB. Vacío o «base» = la cuota del servidor">
+                      <button class="btn btn-sm btn-outline-secondary">MB</button>
+                    </form>
+                    <div class="tenue" style="font-size:.75rem">{{ u.cuotaPropia ? 'cuota propia' : 'cuota del servidor' }}</div>
+                  </td>
+                  <td class="text-end">
+                    <form method="post" action="/admin/estado" class="m-0 d-inline">
+                      <input type="hidden" name="usuario" :value="u.usuario">
+                      <input type="hidden" name="activo" :value="u.activo === false ? '1' : '0'">
+                      <button class="btn btn-sm btn-outline-secondary">{{ u.activo === false ? 'Activar' : 'Desactivar' }}</button>
+                    </form>
+                  </td>
+                </tr>
+                <tr v-if="u.apps.length">
+                  <td colspan="5" class="pt-0">
+                    <div class="tenue" style="font-size:.85rem">Apps:
+                      <span v-for="a in u.apps" :key="a.id" class="pastilla">{{ a.app }} · {{ a.scope }}
+                        <form method="post" action="/admin/revocar" class="d-inline m-0">
+                          <input type="hidden" name="usuario" :value="u.usuario">
+                          <input type="hidden" name="id" :value="a.id">
+                          <button class="btn btn-link p-0 align-baseline" style="font-size:.8rem">desconectar</button>
+                        </form>
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+              <tr v-if="!usuarios.length"><td colspan="5" class="tenue">Sin cuentas</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="tarjeta">
+          <h2>Cuota de espacio por defecto</h2>
+          <p class="tenue">Lo que puede ocupar cada cuenta que no tenga una cuota propia.
+            Ahora mismo: <strong>{{ kb(config.cuotaBase) }}</strong>.</p>
+          <form method="post" action="/admin/cuota-base" class="d-flex gap-2 align-items-end">
+            <div><label class="form-label" style="font-size:.85rem">MB por cuenta</label>
+              <input class="form-control mono" name="mb" inputmode="decimal" style="width:120px"
+                     :value="Math.round(config.cuotaBase / 1048576)" required></div>
+            <button class="btn btn-sm btn-outline-secondary mb-1">Guardar</button>
+          </form>
+          <p class="tenue mt-2 mb-0" style="font-size:.85rem">Cambiarla no borra nada: si alguien ya ocupa
+            más, no podrá guardar cosas nuevas hasta bajar de su nuevo límite.</p>
+        </div>
+        <div class="tarjeta">
+          <h2>Cifrado en reposo</h2>
+          <template v-if="config.cifrado">
+            <p class="mb-1"><span class="pastilla bien">activo</span> AES-256-GCM</p>
+            <p class="tenue mb-0" style="font-size:.85rem">Los cuerpos se guardan cifrados en MongoDB con una
+              clave que vive en <span class="mono">state/instalacion.json</span>, fuera de la base. Quien tenga un
+              dump o un backup de Mongo ve rutas, tamaños y fechas, pero <strong>no el contenido</strong>.</p>
+          </template>
+          <template v-else>
+            <p class="mb-1"><span class="pastilla mal">inactivo</span></p>
+            <p class="tenue mb-0" style="font-size:.85rem">Sin clave los cuerpos se guardan en claro. Define
+              <span class="mono">RM_CLAVE_CIFRADO</span> (32 bytes en base64) o instala desde cero.</p>
+          </template>
+        </div>
+        <div class="tarjeta">
+          <h2>Registro</h2>
+          <p class="tenue">Ahora mismo: <strong>{{ config.registroAbierto ? 'abierto' : 'cerrado' }}</strong></p>
+          <form method="post" action="/admin/registro" class="m-0">
+            <input type="hidden" name="abierto" :value="config.registroAbierto ? '0' : '1'">
+            <button class="btn btn-sm btn-outline-secondary">{{ config.registroAbierto ? 'Cerrar el registro' : 'Abrir el registro' }}</button>
+          </form>
+        </div>
+      </template>
     </div>
-    <div class="tarjeta">
-      <h2>Cuota de espacio por defecto</h2>
-      <p class="tenue">Lo que puede ocupar cada cuenta que no tenga una cuota propia.
-      Ahora mismo: <strong>${kb(config.cuotaBase)}</strong>.</p>
-      <form method="post" action="/admin/cuota-base" class="d-flex gap-2 align-items-end">
-        <div><label class="form-label" style="font-size:.85rem">MB por cuenta</label>
-          <input class="form-control mono" name="mb" inputmode="decimal" style="width:120px"
-                 value="${(config.cuotaBase / 1048576).toFixed(0)}" required></div>
-        <button class="btn btn-sm btn-outline-secondary mb-1">Guardar</button>
-      </form>
-      <p class="tenue mt-2 mb-0" style="font-size:.85rem">Cambiarla no borra nada: si alguien ya ocupa
-      más, no podrá guardar cosas nuevas hasta bajar de su nuevo límite.</p>
-    </div>
-    <div class="tarjeta">
-      <h2>Cifrado en reposo</h2>
-      ${config.cifrado
-    ? '<p class="mb-1"><span class="pastilla bien">activo</span> AES-256-GCM</p>'
-      + '<p class="tenue mb-0" style="font-size:.85rem">Los cuerpos se guardan cifrados en MongoDB con una clave que vive en '
-      + '<span class="mono">state/instalacion.json</span>, fuera de la base. Quien tenga un dump o un backup de Mongo '
-      + 've rutas, tamaños y fechas, pero <strong>no el contenido</strong>.</p>'
-    : '<p class="mb-1"><span class="pastilla mal">inactivo</span></p>'
-      + '<p class="tenue mb-0" style="font-size:.85rem">Sin clave los cuerpos se guardan en claro. Define '
-      + '<span class="mono">RM_CLAVE_CIFRADO</span> (32 bytes en base64) o instala desde cero.</p>'}
-    </div>
-    <div class="tarjeta">
-      <h2>Registro</h2>
-      <p class="tenue">Ahora mismo: <strong>${config.registroAbierto ? 'abierto' : 'cerrado'}</strong></p>
-      <form method="post" action="/admin/registro" class="m-0">
-        <input type="hidden" name="abierto" value="${config.registroAbierto ? '0' : '1'}">
-        <button class="btn btn-sm btn-outline-secondary">${config.registroAbierto ? 'Cerrar el registro' : 'Abrir el registro'}</button>
-      </form>
-    </div>`,
+    <script>
+    ${AYUDAS}
+    Vue.createApp({
+      data: () => ({ listo: false, usuarios: [], error: ${JSON.stringify(String(error ?? ''))},
+        config: { cuotaBase: 0, cifrado: false, registroAbierto: true } }),
+      methods: { kb },
+      async mounted() {
+        try {
+          const r = await fetch('/api/admin', { credentials: 'same-origin' });
+          if (r.ok) { const d = await r.json(); this.usuarios = d.usuarios; this.config = d.config; }
+        } finally { this.listo = true; }
+      },
+    }).mount('#app');
+    </script>`,
   { nav: '<a href="/panel">Mi panel</a> · <a href="/salir">Salir</a>' });
 }
 

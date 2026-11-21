@@ -87,9 +87,9 @@ test('cuota propia: la pone el admin en MB y el usuario ve su tope', async () =>
     const r = await fetch(`${base}/entrar`, { ...formulario({ usuario: 'adela', clave: 'contrasena-larga' }), redirect: 'manual' });
     return { cookie: (r.headers.get('set-cookie') || '').split(';')[0] };
   })();
-  let panel = await (await fetch(`${base}/panel`, { headers: { cookie: cookieAdela } })).text();
-  assert.match(panel, /de <strong>100 B<\/strong>/);
-  assert.match(panel, /Te quedan/);
+  let datos = await (await fetch(`${base}/api/panel`, { headers: { cookie: cookieAdela } })).json();
+  assert.equal(datos.cuota, CUOTA, 'se ve la cuota base del servidor');
+  assert.equal(datos.usado, 0);
 
   // el admin le da 2 MB
   const r = await fetch(`${base}/admin/cuota`, {
@@ -102,13 +102,16 @@ test('cuota propia: la pone el admin en MB y el usuario ve su tope', async () =>
   // ya cabe lo que antes no cabía
   assert.equal((await poner(base, token, 'quemo/grande.json', 'x'.repeat(5000))).status, 200);
 
-  panel = await (await fetch(`${base}/panel`, { headers: { cookie: cookieAdela } })).text();
-  assert.match(panel, /de <strong>2\.00 MB<\/strong>/);
+  datos = await (await fetch(`${base}/api/panel`, { headers: { cookie: cookieAdela } })).json();
+  assert.equal(datos.cuota, 2 * 1024 * 1024, 'el usuario ve su cuota propia');
+  assert.equal(datos.usado, 5000);
 
   // y el admin ve el reparto
-  const adminHtml = await (await fetch(`${base}/admin`, { headers: { cookie } })).text();
-  assert.match(adminHtml, /cuota propia/);
-  assert.match(adminHtml, /4\.9 kB de 2\.00 MB/);
+  const { usuarios } = await (await fetch(`${base}/api/admin`, { headers: { cookie } })).json();
+  const fila = usuarios.find((u) => u.usuario === 'adela');
+  assert.equal(fila.cuotaPropia, true);
+  assert.equal(fila.cuota, 2 * 1024 * 1024);
+  assert.equal(fila.totalBytes, 5000);
   await cerrar();
 });
 
@@ -155,6 +158,6 @@ test('cuota: un valor absurdo no se acepta', async () => {
   const r = await fetch(`${base}/admin/cuota-base`, { ...formulario({ mb: '-3' }), headers: cabeceras, redirect: 'manual' });
   assert.equal(r.headers.get('location'), '/admin?error=cuota');
   const html = await (await fetch(`${base}/admin?error=cuota`, { headers: { cookie } })).text();
-  assert.match(html, /Esa cuota no vale/);
+  assert.match(html, /Esa cuota no vale/, 'el aviso viaja en la página');
   await cerrar();
 });

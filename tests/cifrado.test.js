@@ -127,6 +127,8 @@ test('el panel de administración dice si el cifrado está activo', async () => 
   assert.match(html, /Cifrado en reposo/);
   assert.match(html, /AES-256-GCM/);
   assert.match(html, /fuera de la base/);
+  const api = await (await fetch(`${base}/api/admin`, { headers: { cookie } })).json();
+  assert.equal(api.config.cifrado, true, 'la API dice que el cifrado está activo');
 
   await new Promise((r) => servidor.close(r));
 });

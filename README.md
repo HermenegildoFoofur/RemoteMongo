@@ -112,6 +112,14 @@ persona, los datos se pierden para siempre**. No está implementado.
 | HEAD | `/storage/<usuario>/<ruta>` | Metadatos (ETag, tipo, tamaño) |
 | PUT | `/storage/<usuario>/<ruta>` | Escribir (con `If-Match` / `If-None-Match`) |
 | DELETE | `/storage/<usuario>/<ruta>` | Borrar |
+| GET | `/api/panel` | Datos del panel de la sesión (JSON) |
+| GET | `/api/admin` | Datos del panel de administración (JSON, solo admin) |
+
+La web (`/panel` y `/admin`) es **Vue 3 sin compilar**: el HTML lleva la plantilla y el
+servidor sirve los datos por `/api/*`. Vue se carga desde CDN (`cdn.jsdelivr.net`) y, si no hay
+red, cae a `web/vue.global.prod.js`, que va en el repo. Bootstrap 5 también se sirve local.
+Las acciones (desconectar app, activar cuenta, cuota) siguen siendo formularios POST normales:
+funcionan aunque el navegador no ejecute JavaScript.
 
 Los **permisos** son por categoría (la primera carpeta): `quemo:rw`, `secretos:rw`, `*:r`.
 Todo lleva **CORS abierto**, ETags para no pisar cambios, y los listados en JSON-LD como pide

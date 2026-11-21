@@ -91,12 +91,14 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
 
     try {
       /* ------------------------------------------------------------- estático */
-      if (url.pathname === '/bootstrap.min.css') {
+      if (url.pathname === '/bootstrap.min.css' || url.pathname === '/vue.global.prod.js') {
         const { readFileSync } = await import('node:fs');
+        const fichero = url.pathname === '/bootstrap.min.css' ? 'bootstrap.min.css' : 'vue.global.prod.js';
+        const tipo = url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript';
         try {
-          const css = readFileSync(new URL('../web/bootstrap.min.css', import.meta.url));
-          res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
-          return res.end(css);
+          const contenido = readFileSync(new URL(`../web/${fichero}`, import.meta.url));
+          res.writeHead(200, { 'Content-Type': `${tipo}; charset=utf-8`, 'Cache-Control': 'public, max-age=86400' });
+          return res.end(contenido);
         } catch {
           res.writeHead(404);
           return res.end();
@@ -382,16 +384,52 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         }));
       }
 
+      /* -------------------------------------------------- datos de los paneles */
+      if (url.pathname === '/api/panel') {
+        const cuenta = await sesionDe(req);
+        if (!cuenta) return json(res, 401, { error: 'sin sesión' });
+        const m = await almacen.resumenMetadatos(cuenta.usuario);
+        return json(res, 200, {
+          usuario: cuenta.usuario,
+          rol: cuenta.rol || 'usuario',
+          dominio: ajustes.dominio,
+          endpoint: `${base()}/storage/${cuenta.usuario}/`,
+          apps: m.apps,
+          categorias: m.categorias,
+          usado: m.totalBytes,
+          cuota: cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase,
+        });
+      }
+
+      if (url.pathname === '/api/admin') {
+        const cuenta = await sesionDe(req);
+        if (!soloAdmin(cuenta)) return json(res, 403, { error: 'solo administración' });
+        const lista = await almacen.listarUsuarios();
+        const usuarios = [];
+        for (const u of lista) {
+          const m = await almacen.resumenMetadatos(u.usuario);
+          usuarios.push({
+            usuario: u.usuario, rol: u.rol, activo: u.activo,
+            apps: m.apps, totalBytes: m.totalBytes,
+            cuota: u.cuota != null ? Number(u.cuota) : ajustes.cuotaBase,
+            cuotaPropia: u.cuota != null,
+          });
+        }
+        return json(res, 200, {
+          usuarios,
+          config: {
+            registroAbierto: ajustes.registroAbierto,
+            cuotaBase: ajustes.cuotaBase,
+            cifrado: Boolean(ajustes.cifrado),
+          },
+        });
+      }
+
       /* -------------------------------------------------------- panel de usuario */
       if (url.pathname === '/panel') {
         const cuenta = await sesionDe(req);
         if (!cuenta) return redirigir(res, '/entrar');
-        const metadatos = await almacen.resumenMetadatos(cuenta.usuario);
-        return respuesta(res, 200, panelUsuario({
-          usuario: cuenta.usuario, rol: cuenta.rol || 'usuario', dominio: ajustes.dominio,
-          endpoint: `${base()}/storage/${cuenta.usuario}/`, metadatos,
-          cuota: cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase,
-        }));
+        return respuesta(res, 200, panelUsuario({ rol: cuenta.rol || 'usuario' }));
       }
 
       if (url.pathname === '/panel/revocar' && req.method === 'POST') {
@@ -468,13 +506,8 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           });
         }
         return respuesta(res, 200, panelAdmin({
-          usuarios,
-          config: {
-            registroAbierto: ajustes.registroAbierto,
-            cuotaBase: ajustes.cuotaBase,
-            cifrado: Boolean(ajustes.cifrado),
-          },
-          error: url.searchParams.get('error') === 'cuota' ? 'Esa cuota no vale: pon un número de MB mayor que cero.' : '',
+          error: url.searchParams.get('error') === 'cuota'
+            ? 'Esa cuota no vale: pon un número de MB mayor que cero.' : '',
         }));
       }
 

@@ -59,8 +59,14 @@ test('alta + entrar: la sesión lleva al panel con su dirección', async () => {
   const panel = await fetch(`${base}/panel`, { headers: { cookie } });
   assert.equal(panel.status, 200);
   const html = await panel.text();
-  assert.match(html, /Hola, adela/);
-  assert.match(html, /adela@datos\.test/);
+  assert.match(html, /id="app"/, 'el panel es una app de Vue');
+  assert.match(html, /vue\.global\.prod\.js/);
+  const datos = await (await fetch(`${base}/api/panel`, { headers: { cookie } })).json();
+  assert.equal(datos.usuario, 'adela');
+  assert.equal(datos.dominio, 'datos.test');
+  assert.match(datos.endpoint, /\/storage\/adela\/$/);
+  const sinSesionApi = await fetch(`${base}/api/panel`);
+  assert.equal(sinSesionApi.status, 401);
 
   const sinSesion = await fetch(`${base}/panel`, { redirect: 'manual' });
   assert.equal(sinSesion.status, 302);
@@ -94,14 +100,18 @@ test('el panel de admin ve apps y espacio, pero NO el contenido', async () => {
   const { cookie } = await entrar(base, 'jefa', 'clave-de-jefa');
   const panel = await fetch(`${base}/admin`, { headers: { cookie } });
   assert.equal(panel.status, 200);
-  const html = await panel.text();
+  assert.match(await panel.text(), /id="app"/);
 
   // metadatos sí
-  assert.match(html, /adela/);
-  assert.match(html, /quemo/);
-  assert.match(html, /kB|B</, 'tiene que enseñar el espacio ocupado');
+  const { usuarios, config: ajustes } = await (await fetch(`${base}/api/admin`, { headers: { cookie } })).json();
+  const adela = usuarios.find((u) => u.usuario === 'adela');
+  assert.ok(adela, 'tiene que salir la cuenta');
+  assert.equal(adela.apps[0].app, 'quemo');
+  assert.ok(adela.totalBytes > 0, 'tiene que enseñar el espacio ocupado');
+  assert.ok(ajustes.cuotaBase > 0);
   // contenido no
-  assert.doesNotMatch(html, /SECRETO-QUE-NO-DEBE-VERSE/);
+  assert.doesNotMatch(JSON.stringify(usuarios), /SECRETO-QUE-NO-DEBE-VERSE/);
+  assert.doesNotMatch(JSON.stringify(usuarios), /recorrido\.json/);
   // y no hay ruta para leer datos ajenos
   const intento = await fetch(`${base}/storage/adela/quemo/recorrido.json`, { headers: { cookie } });
   assert.equal(intento.status, 401, 'la sesión de la web no sirve para leer el almacén');
