@@ -40,8 +40,12 @@ test('webfinger: el «+» entrega otro almacén y solo si existe', async () => {
   // sin crear nada: el almacén por defecto responde y «trabajo» no
   let wf = await (await fetch(`${base}/.well-known/webfinger?resource=acct:adela@datos.test`)).json();
   assert.match(wf.links.find((l) => l.rel === 'remoteStorage').href, /\/storage\/adela\/$/);
-  let no = await fetch(`${base}/.well-known/webfinger?resource=acct:adela%2Btrabajo@datos.test`);
-  assert.equal(no.status, 404);
+
+  // sin crearlo antes: el almacén se anuncia igual y la app puede pedir permiso
+  const antes = await fetch(`${base}/.well-known/webfinger?resource=acct:adela%2Btrabajo@datos.test`);
+  assert.equal(antes.status, 200, 'no hace falta crearlo desde el panel');
+  const wfAntes = await antes.json();
+  assert.match(wfAntes.links.find((l) => l.rel === 'remoteStorage').href, /\/storage\/adela\+trabajo\/$/);
 
   // se crea desde el panel
   const r = await fetch(`${base}/panel/espacio`, {
@@ -145,8 +149,7 @@ test('almacenes: borrar uno se lleva sus datos y sus tokens', async () => {
   assert.equal(await almacen.token(tTrabajo), null, 'el token de ese almacén se revoca');
   const leer = await fetch(`${base}/storage/adela+trabajo/quemo/a.json`, { headers: { Authorization: `Bearer ${tTrabajo}` } });
   assert.equal(leer.status, 401);
-  const wf = await fetch(`${base}/.well-known/webfinger?resource=acct:adela%2Btrabajo@datos.test`);
-  assert.equal(wf.status, 404);
+  assert.deepEqual(await almacen.espaciosDe('adela'), [], 'el almacén ya no está en la cuenta');
   await cerrar();
 });
 
@@ -178,5 +181,34 @@ test('webfinger: también responde en /webfinger (proxys que quitan el prefijo)'
   const corto = await fetch(`${base}/webfinger?resource=acct:adela@datos.test`);
   assert.equal(corto.status, 200);
   assert.deepEqual(await corto.json(), await normal.json());
+  await cerrar();
+});
+
+
+test('el almacén se crea al aprobar el permiso, no antes', async () => {
+  const { base, almacen, cerrar } = await arrancar();
+  const cookie = await alta(base);
+
+  // la app pide permiso para un almacén que no existe
+  const pantalla = await (await fetch(`${base}/oauth/adela+trabajo?scope=quemo:rw&client_id=quemo`)).text();
+  assert.match(pantalla, /todavía no existe/, 'la pantalla avisa de que se va a crear');
+  assert.deepEqual(await almacen.espaciosDe('adela'), [], 'nada creado todavía');
+
+  // se aprueba: ahí nace el almacén
+  const r = await fetch(`${base}/oauth/adela+trabajo`, {
+    ...formulario({ clave: 'contrasena-larga', scope: 'quemo:rw', redirect: 'https://app.test/', app: 'quemo' }),
+    redirect: 'manual',
+  });
+  assert.equal(r.status, 302);
+  assert.deepEqual(await almacen.espaciosDe('adela'), ['trabajo'], 'creado al aprobar');
+
+  // y el token funciona contra ese almacén
+  const salida = new URL(r.headers.get('location'));
+  const t = new URLSearchParams(salida.hash.slice(1)).get('access_token');
+  const put = await fetch(`${base}/storage/adela+trabajo/quemo/a.json`, {
+    method: 'PUT', headers: { Authorization: `Bearer ${t}` }, body: 'dentro',
+  });
+  assert.equal(put.status, 200);
+  assert.equal(await almacen.totalUsado('adela+trabajo'), 6);
   await cerrar();
 });

@@ -9,7 +9,7 @@ import http from 'node:http';
 import { AlmacenMongo, AlmacenMemoria, normal } from './store.js';
 import { analizarScopes, permite } from './scopes.js';
 import {
-  claveCorrecta, crearSal, espacioValido, hashClave, nuevoToken, partirDireccion,
+  claveCorrecta, crearSal, direccionValida, espacioValido, hashClave, nuevoToken, partirDireccion,
   permisosLegibles, pkceCorrecto, usuarioValido,
 } from './cuentas.js';
 import { cookieDe, crearSesion, leerSesion } from './sesiones.js';
@@ -223,9 +223,11 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         const usuario = m ? m[1].trim().toLowerCase().replace(/\s+/g, '+') : '';
         const existe = usuario && await almacen.usuario(usuario);
         if (!existe) return json(res, 404, { error: 'no existe esa cuenta' });
-        const { espacio } = partirDireccion(usuario);
-        if (espacio && !(await almacen.espaciosDe(usuario)).includes(espacio)) {
-          return json(res, 404, { error: 'esa cuenta no tiene ese almacén' });
+        // El almacén no hace falta crearlo antes: si la cuenta existe, el almacén se
+        // anuncia y será la pantalla de permiso la que lo cree al aprobarlo.
+        const { espacio, cuenta: cuentaBase } = partirDireccion(usuario);
+        if (espacio && !direccionValida(usuario)) {
+          return json(res, 404, { error: 'ese nombre de almacén no vale' });
         }
         return json(res, 200, {
           subject: `acct:${usuario}@${ajustes.dominio}`,
@@ -245,8 +247,9 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         const usuario = camino.split('/')[2];
         const cuenta = usuario && await almacen.usuario(usuario);
         const { espacio: espacioPedido } = partirDireccion(usuario || '');
-        const almacenOk = !espacioPedido || (await almacen.espaciosDe(usuario)).includes(espacioPedido);
-        if (!cuenta || !almacenOk) {
+        const almacenes = cuenta ? await almacen.espaciosDe(usuario) : [];
+        const almacenNuevo = Boolean(espacioPedido) && !almacenes.includes(espacioPedido);
+        if (!cuenta || (espacioPedido && !direccionValida(usuario))) {
           return respuesta(res, 404, avisoPagina({ raiz: raiz(),
             titulo: 'Esa cuenta no existe',
             texto: 'Revisa la dirección que has puesto en la app.',
@@ -265,7 +268,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
             }));
           }
           return respuesta(res, 200, permiso({ raiz: raiz(),
-            usuario, scope, permisos,
+            usuario, scope, permisos, almacenNuevo, espacio: espacioPedido,
             app: url.searchParams.get('client_id') || 'una aplicación',
             redirect: url.searchParams.get('redirect_uri') || '',
             estado: url.searchParams.get('state') || '',
@@ -290,6 +293,8 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
               enlace: '/', boton: 'Inicio',
             }));
           }
+
+          if (almacenNuevo) await almacen.crearEspacio(usuario, espacioPedido);
 
           const destino = datos.redirect || '';
           const separador = destino.includes('#') ? '&' : '#';

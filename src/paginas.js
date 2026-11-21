@@ -330,7 +330,13 @@ export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
               <span class="text-xl" aria-hidden="true">{{ esp.espacio ? '📁' : '🏠' }}</span>
               <div>
                 <h2 class="font-semibold">{{ esp.espacio ? 'Almacén «' + esp.espacio + '»' : 'Almacén por defecto' }}</h2>
-                <p class="mono text-sm text-tenue">{{ esp.direccion }}</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="mono text-sm text-tenue">{{ esp.direccion }}</span>
+                  <button type="button" class="boton-suave px-2 py-0.5 text-xs"
+                          @click="copiar(esp.direccion, 'dir-' + esp.espacio)"
+                          :title="'Copiar ' + esp.direccion">
+                    {{ copiado['dir-' + esp.espacio] ? '✅ Copiada' : '📋 Copiar dirección' }}</button>
+                </div>
               </div>
             </div>
             <div class="flex items-center gap-2">
@@ -345,7 +351,12 @@ export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
           </div>
 
           <p class="etiqueta">Endpoint para las apps</p>
-          <div class="dato mb-5">{{ esp.endpoint }}</div>
+          <div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <div class="dato flex-1">{{ esp.endpoint }}</div>
+            <button type="button" class="boton-suave px-3 py-1 text-xs sm:py-0"
+                    @click="copiar(esp.endpoint, 'ep-' + esp.espacio)">
+              {{ copiado['ep-' + esp.espacio] ? '✅ Copiado' : '📋 Copiar' }}</button>
+          </div>
 
           <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-tenue">
             Aplicaciones conectadas ({{ esp.apps.length }})</h3>
@@ -395,12 +406,28 @@ export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
     ${AYUDAS}
     Vue.createApp({
       data: () => ({ listo: false, usuario: '', rol: 'usuario', dominio: '',
-        espacios: [], usado: 0, cuota: 0 }),
+        espacios: [], usado: 0, cuota: 0, copiado: {} }),
       computed: {
         pct() { return this.cuota > 0 ? Math.min(100, Math.round((this.usado / this.cuota) * 100)) : 0; },
         clase() { return this.pct >= 100 ? 'llena' : this.pct >= 90 ? 'apurado' : ''; },
       },
-      methods: { kb, fecha },
+      methods: {
+        kb, fecha,
+        async copiar(texto, clave) {
+          try {
+            await navigator.clipboard.writeText(texto);
+          } catch (e) {
+            // sin permiso de portapapeles (o sin HTTPS): se copia con un campo temporal
+            const campo = document.createElement('textarea');
+            campo.value = texto; campo.style.position = 'fixed'; campo.style.opacity = '0';
+            document.body.appendChild(campo); campo.select();
+            try { document.execCommand('copy'); } catch (e2) { /* nada */ }
+            campo.remove();
+          }
+          this.copiado = { ...this.copiado, [clave]: true };
+          setTimeout(() => { this.copiado = { ...this.copiado, [clave]: false }; }, 1800);
+        },
+      },
       async mounted() {
         try {
           const r = await fetch('api/panel', { credentials: 'same-origin' });
@@ -553,13 +580,16 @@ export function panelAdmin({ error = '', raiz = '' } = {}) {
 }
 
 /* ------------------------------------------------------------- permiso OAuth */
-export function permiso({ usuario, scope, permisos, app, redirect, estado, reto, metodo, raiz = '' }) {
+export function permiso({ usuario, scope, permisos, app, redirect, estado, reto, metodo, espacio = '', almacenNuevo = false, raiz = '' }) {
   return pagina('Permiso', `
     <div class="mx-auto max-w-lg">
       <div class="caja">
         <h1 class="text-xl font-semibold">Permiso para ${esc(app)}</h1>
         <p class="mt-1 text-sm text-tenue">La aplicación quiere acceder a tu cuenta
           <strong class="text-texto">${esc(usuario)}</strong> en:</p>
+        ${almacenNuevo ? `<div class="mt-3 rounded-lg border border-acento/40 bg-acento/10 px-3 py-2 text-sm text-acento">
+          El almacén <span class="mono">${esc(espacio)}</span> todavía no existe: si permites, se crea ahora
+          y queda vacío, aparte del resto.</div>` : ''}
         <ul class="mt-3 space-y-1">
           ${permisos.map((p) => `<li class="mono rounded-lg bg-superficie-2 px-3 py-2 text-sm">${esc(p)}</li>`).join('')}
         </ul>
