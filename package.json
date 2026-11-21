@@ -1,0 +1,17 @@
+{
+  "name": "remotemongo",
+  "version": "0.1.0",
+  "description": "Servidor remoteStorage con MongoDB por detrás: cada usuario tiene su dirección y sus apps hablan con él con permisos por carpeta",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "keywords": ["remotestorage", "mongodb", "unhosted", "personal-data"],
+  "license": "MIT",
+  "dependencies": {
+    "mongodb": "^6.10.0"
+  }
+}
