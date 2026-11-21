@@ -168,3 +168,15 @@ test('almacenes: nombre inválido no se crea y el suyo no se puede borrar', asyn
   assert.ok(await almacen.usuario('adela'), 'la cuenta sigue viva');
   await cerrar();
 });
+
+
+test('webfinger: también responde en /webfinger (proxys que quitan el prefijo)', async () => {
+  const { base, cerrar } = await arrancar();
+  await alta(base);
+  const normal = await fetch(`${base}/.well-known/webfinger?resource=acct:adela@datos.test`);
+  assert.equal(normal.status, 200);
+  const corto = await fetch(`${base}/webfinger?resource=acct:adela@datos.test`);
+  assert.equal(corto.status, 200);
+  assert.deepEqual(await corto.json(), await normal.json());
+  await cerrar();
+});

@@ -210,7 +210,9 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       }
 
       /* ------------------------------------------------------ descubrimiento */
-      if (camino === '/.well-known/webfinger') {
+      // WebFinger vive en la raíz del host. Se acepta también «/webfinger» porque
+      // algunos proxys (tailscale serve --set-path /.well-known) quitan el prefijo.
+      if (camino === '/.well-known/webfinger' || camino === '/webfinger') {
         const recurso = url.searchParams.get('resource') || '';
         const m = /^acct:([a-z0-9._+\-\s]+)@/i.exec(recurso);
         // en la cadena de consulta un «+» sin codificar llega como espacio: se recupera
