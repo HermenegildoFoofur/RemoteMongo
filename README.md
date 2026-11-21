@@ -62,6 +62,22 @@ Y lo importante: por ahí **no se puede leer ningún dato de nadie**. El panel s
 metadatos (recuentos y tamaños); el contenido de las cuentas no se sirve ni con sesión de
 administración. El administrador tiene su propio almacén como cualquier usuario, en `/panel`.
 
+## Varios almacenes por cuenta
+
+Una cuenta puede tener **varios almacenes**, con el «+» en la dirección, como en el correo:
+
+| Dirección | Almacén | Endpoint |
+|---|---|---|
+| `adela@dominio` | el de por defecto | `/storage/adela/` |
+| `adela+trabajo@dominio` | otro, aparte | `/storage/adela+trabajo/` |
+
+- Misma contraseña y **misma cuota** (la cuota es de la cuenta y suma todos sus almacenes).
+- **Aislamiento real**: mismo nombre de carpeta (`quemo/`), documentos distintos; un token de un
+  almacén no abre el otro ni con `*:rw`.
+- Tokens, apps y copia de seguridad, **por almacén**; se crean y se borran desde `/panel`, y la
+  copia se descarga con `/panel/respaldo?espacio=trabajo`.
+- En `/admin` se ve el desglose de cada cuenta por almacén (tamaño y número de apps).
+
 ## Cuotas de espacio
 
 Hay una **cuota base** para todas las cuentas (100 MB por defecto, `RM_CUOTA_BASE` o desde
@@ -99,6 +115,25 @@ leer. Eso solo se consigue cifrando en el cliente, y entonces el servidor guarda
 opacos: sin listados útiles, sin cuotas por contenido, y **si se pierde la clave de la
 persona, los datos se pierden para siempre**. No está implementado.
 
+
+## Dónde tiene que vivir (WebFinger)
+
+El descubrimiento de remoteStorage está clavado en **la raíz del host**: las apps preguntan a
+`https://<host>/.well-known/webfinger`. Consecuencias:
+
+- **Lo limpio es instalarlo en la raíz** de un dominio o subdominio (`remotemongo.midominio.net`):
+  con la ruta de instalación vacía, todo el protocolo funciona sin peros.
+- Si vive en una **subruta** (`/remotemongo`), el host raíz tiene que reenviar `/.well-known/` al
+  servicio. Con nginx:
+
+```nginx
+location = /.well-known/webfinger { proxy_pass http://127.0.0.1:8790; }
+```
+
+  El resto puede seguir en la subruta; el WebFinger que devuelve ya anuncia los endpoints
+  correctos.
+- Sin eso, la dirección `usuario@dominio` no se puede resolver; las apps tendrían que conectarse
+  **dando la URL del endpoint** en vez de la dirección.
 
 ## La ruta de instalación
 

@@ -303,51 +303,95 @@ export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
     <div id="app">
       <p v-if="!listo" class="tenue">Cargando…</p>
       <template v-else>
-        <div class="tarjeta">
-          <h1>Hola, {{ usuario }}</h1>
-          <p class="tenue">Tu dirección es lo que pones en las apps:</p>
-          <div class="dato mono">{{ usuario }}@{{ dominio }}</div>
-          <p class="mt-2 mb-1 tenue">Y tu endpoint, para apps que no hablan WebFinger:</p>
-          <div class="dato mono">{{ endpoint }}</div>
-        </div>
-        <div class="tarjeta">
-          <h2>Aplicaciones conectadas ({{ apps.length }})</h2>
-          <p v-if="!apps.length" class="tenue mt-2">Ninguna app conectada todavía.</p>
-          <div v-for="a in apps" :key="a.id"
-               class="d-flex justify-content-between align-items-center border-top pt-2 mt-2">
-            <div>
-              <strong>{{ a.app }}</strong><br>
-              <span class="pastilla mono">{{ a.scope }}</span>
-              <span class="tenue" style="font-size:.8rem">desde {{ fecha(a.creado) }}</span>
-            </div>
-            <form method="post" action="/panel/revocar" class="m-0">
-              <input type="hidden" name="id" :value="a.id">
-              <button class="btn btn-sm btn-outline-danger">Desconectar</button>
-            </form>
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+          <div>
+            <h1 class="h4 mb-1">Hola, {{ usuario }}</h1>
+            <p class="tenue mb-0 small">Cada almacén es un espacio aparte: sus carpetas, sus apps y su copia.</p>
+          </div>
+          <div class="text-end">
+            <div class="small tenue">Cuota de la cuenta</div>
+            <div><strong>{{ kb(usado) }}</strong> de <strong>{{ kb(cuota) }}</strong>
+              <span class="tenue">({{ pct }} %)</span></div>
+            <div class="barra" style="width:200px"><div class="barra-llena" :class="clase" :style="{ width: pct + '%' }"></div></div>
           </div>
         </div>
-        <div class="tarjeta">
-          <h2>Lo que ocupas</h2>
-          <p class="mb-1"><strong>{{ kb(usado) }}</strong> de <strong>{{ kb(cuota) }}</strong>
-            <span class="tenue">({{ pct }} %)</span></p>
-          <div class="barra"><div class="barra-llena" :class="clase" :style="{ width: pct + '%' }"></div></div>
-          <p class="tenue" style="font-size:.85rem">Te quedan <strong>{{ kb(resto) }}</strong>.
-            Si se llena, las apps reciben un aviso y no se guarda nada más hasta que borres algo.</p>
-          <span v-for="c in categorias" :key="c.categoria" class="pastilla mono">
-            {{ c.categoria }} · {{ c.documentos }} doc · {{ kb(c.bytes) }}</span>
-          <span v-if="!categorias.length" class="tenue">Sin datos guardados.</span>
-          <p class="mt-3 mb-0"><a class="btn btn-sm btn-outline-secondary" href="/panel/respaldo">Descargar copia (JSON)</a></p>
+
+        <div v-for="esp in espacios" :key="esp.espacio" class="card shadow-sm mb-3">
+          <div class="card-header bg-transparent d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div class="d-flex align-items-center gap-2">
+              <span class="paso" aria-hidden="true">{{ esp.espacio ? '📁' : '🏠' }}</span>
+              <div>
+                <div class="fw-semibold">{{ esp.espacio ? 'Almacén «' + esp.espacio + '»' : 'Almacén por defecto' }}</div>
+                <div class="mono small tenue">{{ esp.direccion }}</div>
+              </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="pastilla mono">{{ kb(esp.usado) }}</span>
+              <form v-if="esp.espacio" method="post" action="/panel/espacio" class="m-0"
+                    onsubmit="return confirm('Se borrará este almacén y todo lo que tenga dentro. ¿Seguro?')">
+                <input type="hidden" name="accion" value="borrar">
+                <input type="hidden" name="espacio" :value="esp.espacio">
+                <button class="btn btn-sm btn-outline-danger">Borrar almacén</button>
+              </form>
+            </div>
+          </div>
+          <div class="card-body">
+            <label class="form-label small tenue mb-1">Endpoint para las apps</label>
+            <div class="dato mono mb-3">{{ esp.endpoint }}</div>
+
+            <h2 class="h6">Aplicaciones conectadas ({{ esp.apps.length }})</h2>
+            <p v-if="!esp.apps.length" class="tenue small mb-3">Ninguna app conectada a este almacén.</p>
+            <div v-for="a in esp.apps" :key="a.id"
+                 class="d-flex justify-content-between align-items-center border-top py-2">
+              <div>
+                <strong>{{ a.app }}</strong>
+                <span class="pastilla mono">{{ a.scope }}</span>
+                <span class="tenue small">desde {{ fecha(a.creado) }}</span>
+              </div>
+              <form method="post" action="/panel/revocar" class="m-0">
+                <input type="hidden" name="id" :value="a.id">
+                <button class="btn btn-sm btn-outline-danger">Desconectar</button>
+              </form>
+            </div>
+
+            <h2 class="h6 mt-4">Lo que ocupa</h2>
+            <span v-for="c in esp.categorias" :key="c.categoria" class="pastilla mono">
+              {{ c.categoria }} · {{ c.documentos }} doc · {{ kb(c.bytes) }}</span>
+            <span v-if="!esp.categorias.length" class="tenue small">Sin datos guardados.</span>
+
+            <p class="mt-3 mb-0">
+              <a class="btn btn-sm btn-outline-secondary" :href="'panel/respaldo' + (esp.espacio ? '?espacio=' + esp.espacio : '')">
+                Descargar copia (JSON)</a>
+            </p>
+          </div>
+        </div>
+
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <h2 class="h6 mb-1">Crear otro almacén</h2>
+            <p class="tenue small">Para separar, por ejemplo, el quemo de casa del del trabajo: mismos permisos,
+              datos distintos. Su dirección sería <span class="mono">{{ usuario }}+nombre@{{ dominio }}</span>.</p>
+            <form method="post" action="/panel/espacio" class="row g-2 align-items-end">
+              <div class="col-12 col-sm-6 col-md-4">
+                <label class="form-label small" for="espacio">Nombre del almacén</label>
+                <input class="form-control font-monospace" id="espacio" name="espacio" required
+                       pattern="[a-z0-9][a-z0-9._-]{0,31}" placeholder="trabajo">
+              </div>
+              <div class="col-12 col-sm-auto">
+                <button class="btn btn-primary">Crear almacén</button>
+              </div>
+            </form>
+          </div>
         </div>
       </template>
     </div>
     <script>
     ${AYUDAS}
     Vue.createApp({
-      data: () => ({ listo: false, usuario: '', rol: 'usuario', dominio: '', endpoint: '',
-        apps: [], categorias: [], usado: 0, cuota: 0 }),
+      data: () => ({ listo: false, usuario: '', rol: 'usuario', dominio: '',
+        espacios: [], usado: 0, cuota: 0 }),
       computed: {
         pct() { return this.cuota > 0 ? Math.min(100, Math.round((this.usado / this.cuota) * 100)) : 0; },
-        resto() { return Math.max(0, this.cuota - this.usado); },
         clase() { return this.pct >= 100 ? 'llena' : this.pct >= 90 ? 'apurado' : ''; },
       },
       methods: { kb, fecha },
@@ -402,9 +446,13 @@ export function panelAdmin({ error = '', raiz = '' } = {}) {
                     </form>
                   </td>
                 </tr>
-                <tr v-if="u.apps.length">
+                <tr>
                   <td colspan="5" class="pt-0">
-                    <div class="tenue" style="font-size:.85rem">Apps:
+                    <div class="tenue small mb-1">Almacenes:
+                      <span v-for="e in u.espacios" :key="e.espacio" class="pastilla mono">
+                        {{ e.espacio || '(por defecto)' }} · {{ kb(e.usado) }} · {{ e.apps }} app(s)</span>
+                    </div>
+                    <div v-if="u.apps.length" class="tenue small">Apps:
                       <span v-for="a in u.apps" :key="a.id" class="pastilla">{{ a.app }} · {{ a.scope }}
                         <form method="post" action="/admin/revocar" class="d-inline m-0">
                           <input type="hidden" name="usuario" :value="u.usuario">

@@ -64,7 +64,10 @@ test('alta + entrar: la sesión lleva al panel con su dirección', async () => {
   const datos = await (await fetch(`${base}/api/panel`, { headers: { cookie } })).json();
   assert.equal(datos.usuario, 'adela');
   assert.equal(datos.dominio, 'datos.test');
-  assert.match(datos.endpoint, /\/storage\/adela\/$/);
+  assert.equal(datos.espacios.length, 1, 'de entrada solo el almacén por defecto');
+  assert.equal(datos.espacios[0].espacio, '');
+  assert.equal(datos.espacios[0].direccion, 'adela@datos.test');
+  assert.match(datos.espacios[0].endpoint, /\/storage\/adela\/$/);
   const sinSesionApi = await fetch(`${base}/api/panel`);
   assert.equal(sinSesionApi.status, 401);
 

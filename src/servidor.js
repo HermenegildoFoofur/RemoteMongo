@@ -9,7 +9,8 @@ import http from 'node:http';
 import { AlmacenMongo, AlmacenMemoria, normal } from './store.js';
 import { analizarScopes, permite } from './scopes.js';
 import {
-  claveCorrecta, crearSal, hashClave, nuevoToken, permisosLegibles, pkceCorrecto, usuarioValido,
+  claveCorrecta, crearSal, espacioValido, hashClave, nuevoToken, partirDireccion,
+  permisosLegibles, pkceCorrecto, usuarioValido,
 } from './cuentas.js';
 import { cookieDe, crearSesion, leerSesion } from './sesiones.js';
 import {
@@ -82,6 +83,32 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
     const cuenta = await almacen.usuario(usuario);
     return cuenta && cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase;
   };
+
+  /** Datos del panel: la cuenta con todos sus almacenes y lo que ocupa cada uno. */
+  async function panelDeCuenta(cuenta) {
+    const nombres = ['', ...(cuenta.espacios || [])];
+    const espacios = [];
+    for (const e of nombres) {
+      const dir = e ? `${cuenta.usuario}+${e}` : cuenta.usuario;
+      const m = await almacen.resumenMetadatos(dir);
+      espacios.push({
+        espacio: e,
+        direccion: `${dir}@${ajustes.dominio}`,
+        endpoint: `${base()}${con(`/storage/${dir}/`)}`,
+        apps: m.apps,
+        categorias: m.categorias,
+        usado: m.totalBytes,
+      });
+    }
+    return {
+      usuario: cuenta.usuario,
+      rol: cuenta.rol || 'usuario',
+      dominio: ajustes.dominio,
+      cuota: cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase,
+      usado: espacios.reduce((s, e) => s + e.usado, 0),
+      espacios,
+    };
+  }
 
   /** Usuario de la sesión, comprobado contra la base (y que siga activo). */
   async function sesionDe(req) {
@@ -185,10 +212,15 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       /* ------------------------------------------------------ descubrimiento */
       if (camino === '/.well-known/webfinger') {
         const recurso = url.searchParams.get('resource') || '';
-        const m = /^acct:([a-z0-9._-]+)@/i.exec(recurso);
-        const usuario = m ? m[1].toLowerCase() : '';
+        const m = /^acct:([a-z0-9._+\-\s]+)@/i.exec(recurso);
+        // en la cadena de consulta un «+» sin codificar llega como espacio: se recupera
+        const usuario = m ? m[1].trim().toLowerCase().replace(/\s+/g, '+') : '';
         const existe = usuario && await almacen.usuario(usuario);
         if (!existe) return json(res, 404, { error: 'no existe esa cuenta' });
+        const { espacio } = partirDireccion(usuario);
+        if (espacio && !(await almacen.espaciosDe(usuario)).includes(espacio)) {
+          return json(res, 404, { error: 'esa cuenta no tiene ese almacén' });
+        }
         return json(res, 200, {
           subject: `acct:${usuario}@${ajustes.dominio}`,
           links: [
@@ -206,7 +238,9 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       if (camino.startsWith('/oauth/') && camino !== '/oauth/token') {
         const usuario = camino.split('/')[2];
         const cuenta = usuario && await almacen.usuario(usuario);
-        if (!cuenta) {
+        const { espacio: espacioPedido } = partirDireccion(usuario || '');
+        const almacenOk = !espacioPedido || (await almacen.espaciosDe(usuario)).includes(espacioPedido);
+        if (!cuenta || !almacenOk) {
           return respuesta(res, 404, avisoPagina({ raiz: raiz(),
             titulo: 'Esa cuenta no existe',
             texto: 'Revisa la dirección que has puesto en la app.',
@@ -414,17 +448,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       if (camino === '/api/panel') {
         const cuenta = await sesionDe(req);
         if (!cuenta) return json(res, 401, { error: 'sin sesión' });
-        const m = await almacen.resumenMetadatos(cuenta.usuario);
-        return json(res, 200, {
-          usuario: cuenta.usuario,
-          rol: cuenta.rol || 'usuario',
-          dominio: ajustes.dominio,
-          endpoint: `${base()}${con(`/storage/${cuenta.usuario}/`)}`,
-          apps: m.apps,
-          categorias: m.categorias,
-          usado: m.totalBytes,
-          cuota: cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase,
-        });
+        return json(res, 200, await panelDeCuenta(cuenta));
       }
 
       if (camino === '/api/admin') {
@@ -433,10 +457,20 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         const lista = await almacen.listarUsuarios();
         const usuarios = [];
         for (const u of lista) {
-          const m = await almacen.resumenMetadatos(u.usuario);
+          const nombres = ['', ...(u.espacios || [])];
+          const espacios = [];
+          let total = 0;
+          const apps = [];
+          for (const e of nombres) {
+            const dir = e ? `${u.usuario}+${e}` : u.usuario;
+            const m = await almacen.resumenMetadatos(dir);
+            total += m.totalBytes;
+            apps.push(...m.apps.map((a) => ({ ...a, espacio: e })));
+            espacios.push({ espacio: e, usado: m.totalBytes, apps: m.apps.length });
+          }
           usuarios.push({
             usuario: u.usuario, rol: u.rol, activo: u.activo,
-            apps: m.apps, totalBytes: m.totalBytes,
+            apps, totalBytes: total, espacios,
             cuota: u.cuota != null ? Number(u.cuota) : ajustes.cuotaBase,
             cuotaPropia: u.cuota != null,
           });
@@ -466,12 +500,30 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         return redirigir(res, con('/panel'));
       }
 
+      if (camino === '/panel/espacio' && req.method === 'POST') {
+        const cuenta = await sesionDe(req);
+        if (!cuenta) return redirigir(res, con('/entrar'));
+        const datos = form(await leerCuerpo(req));
+        if (datos.accion === 'borrar') {
+          const esp = String(datos.espacio || '').toLowerCase();
+          if (esp && (cuenta.espacios || []).includes(esp)) await almacen.borrarEspacio(cuenta.usuario, esp);
+          return redirigir(res, con('/panel'));
+        }
+        const nombre = String(datos.espacio || '').toLowerCase().trim();
+        if (!espacioValido(nombre)) return redirigir(res, con('/panel?error=espacio'));
+        await almacen.crearEspacio(cuenta.usuario, nombre);
+        return redirigir(res, con('/panel'));
+      }
+
       if (camino === '/panel/respaldo') {
         const cuenta = await sesionDe(req);
         if (!cuenta) return redirigir(res, con('/entrar'));
-        const documentos = (await almacen.todoDe?.(cuenta.usuario)) || [];
-        return json(res, 200, { usuario: cuenta.usuario, fecha: new Date().toISOString(), documentos }, {
-          'Content-Disposition': `attachment; filename="remotemongo-${cuenta.usuario}.json"`,
+        const esp = String(url.searchParams.get('espacio') || '').toLowerCase();
+        const dir = esp ? `${cuenta.usuario}+${esp}` : cuenta.usuario;
+        if (esp && !(cuenta.espacios || []).includes(esp)) return json(res, 404, { error: 'no existe ese almacén' });
+        const documentos = (await almacen.todoDe?.(dir)) || [];
+        return json(res, 200, { usuario: dir, fecha: new Date().toISOString(), documentos }, {
+          'Content-Disposition': `attachment; filename="remotemongo-${dir}.json"`,
         });
       }
 

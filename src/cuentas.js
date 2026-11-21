@@ -21,9 +21,29 @@ export function claveCorrecta(clave, usuario) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Valida un usuario nuevo: minúsculas, sin espacios y sin cosas raras en la URL. */
+/** Una dirección puede llevar almacén: «adela+trabajo» → cuenta adela, almacén trabajo. */
+export function partirDireccion(direccion) {
+  const limpio = String(direccion || '').toLowerCase();
+  const i = limpio.indexOf('+');
+  if (i === -1) return { cuenta: limpio, espacio: '' };
+  return { cuenta: limpio.slice(0, i), espacio: limpio.slice(i + 1) };
+}
+
+/** Valida una cuenta: minúsculas, sin espacios y sin cosas raras en la URL. */
 export function usuarioValido(nombre) {
   return /^[a-z0-9][a-z0-9._-]{1,31}$/.test(String(nombre || '').toLowerCase());
+}
+
+/** Valida el nombre de un almacén (lo que va detrás del «+»). */
+export function espacioValido(nombre) {
+  return /^[a-z0-9][a-z0-9._-]{0,31}$/.test(String(nombre || '').toLowerCase());
+}
+
+/** Valida una dirección completa: «adela» o «adela+trabajo». */
+export function direccionValida(valor) {
+  const { cuenta, espacio } = partirDireccion(valor);
+  if (!usuarioValido(cuenta)) return false;
+  return espacio === '' || espacioValido(espacio);
 }
 
 export const nuevoToken = () => randomBytes(32).toString('base64url');
