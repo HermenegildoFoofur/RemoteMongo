@@ -115,10 +115,11 @@ test('el admin puede desconectar una app de otra cuenta', async () => {
   const sal = crearSal();
   await almacen.crearUsuario({ usuario: 'jefa', hash: hashClave('clave-de-jefa', sal), sal, rol: 'admin' });
   await almacen.guardarToken({ token: 'tok1', usuario: 'adela', scope: 'quemo:rw', app: 'quemo' });
+  const [{ id }] = await almacen.listarTokens('adela');
 
   const { cookie } = await entrar(base, 'jefa', 'clave-de-jefa');
   const r = await fetch(`${base}/admin/revocar`, {
-    ...formulario({ usuario: 'adela', token: 'tok1' }),
+    ...formulario({ usuario: 'adela', id }),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', cookie },
     redirect: 'manual',
   });

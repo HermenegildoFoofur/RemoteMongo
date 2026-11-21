@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'n
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { nuevaClave } from './cifrado.js';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const FICHERO = process.env.RM_INSTALACION || path.join(RAIZ, 'state', 'instalacion.json');
@@ -28,13 +29,19 @@ export function leerInstalacion() {
       secreto: process.env.RM_SECRETO || process.env.RM_ADMIN_TOKEN,
       puerto: Number(process.env.RM_PORT || 8790),
       cuotaBase: Number(process.env.RM_CUOTA_BASE) || CUOTA_BASE,
+      claveCifrado: process.env.RM_CLAVE_CIFRADO || null,
       origen: 'entorno',
     };
   }
   try {
     const datos = JSON.parse(readFileSync(FICHERO, 'utf8'));
     if (datos && datos.mongoUrl && datos.dominio) {
-      return { ...datos, cuotaBase: Number(datos.cuotaBase) || CUOTA_BASE, configurado: true };
+      return {
+        ...datos,
+        cuotaBase: Number(datos.cuotaBase) || CUOTA_BASE,
+        claveCifrado: datos.claveCifrado || null,
+        configurado: true,
+      };
     }
   } catch { /* sin fichero: no instalado */ }
   return {
@@ -48,7 +55,7 @@ export function leerInstalacion() {
   };
 }
 
-export function guardarInstalacion({ mongoUrl, mongoDb, dominio, https = true, puerto, cuotaBase }) {
+export function guardarInstalacion({ mongoUrl, mongoDb, dominio, https = true, puerto, cuotaBase, claveCifrado }) {
   const datos = {
     configurado: true,
     mongoUrl,
@@ -56,12 +63,24 @@ export function guardarInstalacion({ mongoUrl, mongoDb, dominio, https = true, p
     dominio: String(dominio).replace(/^https?:\/\//, '').replace(/\/+$/, ''),
     https: Boolean(https),
     secreto: randomBytes(32).toString('hex'),
+    claveCifrado: claveCifrado || nuevaClave(),
     puerto: Number(puerto) || 8790,
     cuotaBase: Number(cuotaBase) || CUOTA_BASE,
     fecha: new Date().toISOString(),
   };
   escribirFichero(datos);
   return datos;
+}
+
+/** Clave de cifrado en reposo: la del fichero, o una nueva que se guarda al momento.
+ *
+ *  Vive fuera de MongoDB a propósito: con un dump de la base no hay nada que leer.
+ */
+export function claveDeCifrado(datos = null) {
+  if (datos && datos.claveCifrado) return datos.claveCifrado;
+  const nueva = nuevaClave();
+  guardarAjustes({ claveCifrado: nueva });
+  return nueva;
 }
 
 /** Cambia ajustes sueltos (cuota base, registro abierto) sin tocar el secreto. */

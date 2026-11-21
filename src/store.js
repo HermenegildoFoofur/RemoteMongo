@@ -6,29 +6,36 @@
  *  los listados de carpeta.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { crearCifrador } from './cifrado.js';
 
 export const COLECCIONES = { documentos: 'documentos', usuarios: 'usuarios', tokens: 'tokens' };
 
 /** Hash corto y estable: es el ETag del documento. */
 export const etagDe = (cuerpo) => `"${createHash('sha256').update(cuerpo).digest('base64url').slice(0, 22)}"`;
 
+/** Los tokens no se guardan: solo su huella. Un dump de Mongo no sirve para entrar. */
+const huellaToken = (valor) => createHash('sha256').update(String(valor)).digest('hex');
+const idToken = () => randomBytes(12).toString('hex');
+
 export class AlmacenMongo {
-  constructor(db) {
+  constructor(db, cifrador = null) {
     this.db = db;
+    this.cifrador = cifrador || crearCifrador(null);
     this.docs = db.collection(COLECCIONES.documentos);
     this.usuarios = db.collection(COLECCIONES.usuarios);
     this.tokens = db.collection(COLECCIONES.tokens);
   }
 
   /** Índices: el path es único por usuario y los listados van por prefijo. */
-  static async preparar(db) {
+  static async preparar(db, cifrador = null) {
     const docs = db.collection(COLECCIONES.documentos);
     await docs.createIndex({ usuario: 1, path: 1 }, { unique: true });
     await docs.createIndex({ usuario: 1, path: 1, carpeta: 1 });
     await db.collection(COLECCIONES.usuarios).createIndex({ usuario: 1 }, { unique: true });
-    await db.collection(COLECCIONES.tokens).createIndex({ token: 1 }, { unique: true });
-    return new AlmacenMongo(db);
+    await db.collection(COLECCIONES.tokens).createIndex({ huella: 1 }, { unique: true });
+    await db.collection(COLECCIONES.tokens).createIndex({ id: 1 }, { unique: true });
+    return new AlmacenMongo(db, cifrador);
   }
 
   /* ------------------------------------------------------------- documentos */
@@ -36,7 +43,7 @@ export class AlmacenMongo {
     const doc = await this.docs.findOne({ usuario, path: normal(ruta), carpeta: false });
     if (!doc) return null;
     return {
-      cuerpo: Buffer.from(doc.cuerpo.buffer ?? doc.cuerpo),
+      cuerpo: this.cifrador.descifrar(Buffer.from(doc.cuerpo.buffer ?? doc.cuerpo)),
       tipo: doc.tipo,
       etag: doc.etag,
       fecha: doc.fecha,
@@ -64,7 +71,8 @@ export class AlmacenMongo {
       {
         $set: {
           usuario, path, carpeta: false, tipo: tipo || 'application/octet-stream',
-          etag, tamano: buffer.length, fecha: new Date().toISOString(), cuerpo: buffer,
+          etag, tamano: buffer.length, fecha: new Date().toISOString(),
+          cuerpo: this.cifrador.cifrar(buffer), cifrado: this.cifrador.activo,
         },
       },
       { upsert: true },
@@ -149,13 +157,13 @@ export class AlmacenMongo {
   /** Solo metadatos: cuántas apps y cuánto ocupa cada categoría. Nunca el contenido. */
   async resumenMetadatos(usuario) {
     const [tokens, uso] = await Promise.all([
-      this.tokens.find({ usuario }, { projection: { token: 1, scope: 1, app: 1, creado: 1 } }).toArray(),
+      this.tokens.find({ usuario }, { projection: { huella: 0, token: 0 } }).toArray(),
       this.uso(usuario),
     ]);
     const bytes = uso.reduce((s, c) => s + c.bytes, 0);
     return {
       usuario,
-      apps: tokens.map((t) => ({ token: t.token, app: t.app, scope: t.scope, creado: t.creado })),
+      apps: tokens.map((t) => ({ id: t.id, app: t.app, scope: t.scope, creado: t.creado })),
       categorias: uso,
       totalBytes: bytes,
     };
@@ -167,14 +175,17 @@ export class AlmacenMongo {
 
   /* ----------------------------------------------------------------- tokens */
   async guardarToken({ token, usuario, scope, app, caduca }) {
+    const id = idToken();
     await this.tokens.insertOne({
-      token, usuario, scope, app: app || 'app', creado: new Date().toISOString(), caduca: caduca || null,
+      id, huella: huellaToken(token), usuario, scope, app: app || 'app',
+      creado: new Date().toISOString(), caduca: caduca || null,
     });
-    return token;
+    return id;
   }
 
   async token(valor) {
-    const t = await this.tokens.findOne({ token: valor });
+    // La huella es lo normal; `token: valor` solo por si queda algo de una versión anterior.
+    const t = await this.tokens.findOne({ $or: [{ huella: huellaToken(valor) }, { token: valor }] });
     if (!t) return null;
     if (t.caduca && new Date(t.caduca) < new Date()) return null;
     return t;
@@ -182,22 +193,25 @@ export class AlmacenMongo {
 
   async listarTokens(usuario) {
     return this.tokens
-      .find({ usuario }, { projection: { _id: 0 } })
+      .find({ usuario }, { projection: { _id: 0, huella: 0, token: 0 } })
       .sort({ creado: -1 })
       .toArray();
   }
 
   async revocarToken(usuario, valor) {
-    const r = await this.tokens.deleteOne({ usuario, token: valor });
+    const r = await this.tokens.deleteOne({
+      usuario,
+      $or: [{ id: String(valor) }, { huella: huellaToken(valor) }, { token: valor }],
+    });
     return r.deletedCount > 0;
   }
 
-  /** Todos los documentos de un usuario, para su copia de seguridad. */
+  /** Todos los documentos de un usuario, para su copia de seguridad (en claro). */
   async todoDe(usuario) {
     const docs = await this.docs.find({ usuario, carpeta: false }).toArray();
     return docs.map((d) => ({
       path: d.path, tipo: d.tipo, etag: d.etag, fecha: d.fecha,
-      contenido: Buffer.from(d.cuerpo.buffer ?? d.cuerpo).toString('base64'),
+      contenido: this.cifrador.descifrar(Buffer.from(d.cuerpo.buffer ?? d.cuerpo)).toString('base64'),
     }));
   }
 
@@ -227,20 +241,21 @@ const escaparRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Almacén en memoria, para los tests (misma interfaz que el de Mongo). */
 export class AlmacenMemoria {
-  constructor() {
+  constructor(cifrador = null) {
+    this.cifrador = cifrador || crearCifrador(null);
     this.docs = new Map();
     this.usuarios = new Map();
     this.tokens = new Map();
   }
 
-  static async preparar() { return new AlmacenMemoria(); }
+  static async preparar(cifrador = null) { return new AlmacenMemoria(cifrador); }
 
   clave(usuario, ruta) { return `${usuario}\u0000${normal(ruta)}`; }
 
   async leer(usuario, ruta) {
     const d = this.docs.get(this.clave(usuario, ruta));
     if (!d || d.carpeta) return null;
-    return { cuerpo: d.cuerpo, tipo: d.tipo, etag: d.etag, fecha: d.fecha };
+    return { cuerpo: this.cifrador.descifrar(d.cuerpo), tipo: d.tipo, etag: d.etag, fecha: d.fecha };
   }
 
   async escribir(usuario, ruta, cuerpo, tipo, { ifMatch, ifNoneMatch, cuotaMax } = {}) {
@@ -257,9 +272,9 @@ export class AlmacenMemoria {
       if (quedaria > cuotaMax) return { conflicto: 'cuota', usado, cuota: cuotaMax, quedaria };
     }
     this.docs.set(k, {
-      usuario, path: normal(ruta), carpeta: false, cuerpo: buffer,
+      usuario, path: normal(ruta), carpeta: false, cuerpo: this.cifrador.cifrar(buffer),
       tipo: tipo || 'application/octet-stream', etag, tamano: buffer.length,
-      fecha: new Date().toISOString(),
+      fecha: new Date().toISOString(), cifrado: this.cifrador.activo,
     });
     return { etag, tamano: buffer.length };
   }
@@ -321,7 +336,7 @@ export class AlmacenMemoria {
   async resumenMetadatos(usuario) {
     const uso = await this.uso(usuario);
     const apps = [...this.tokens.values()].filter((t) => t.usuario === usuario)
-      .map((t) => ({ token: t.token, app: t.app, scope: t.scope, creado: t.creado }));
+      .map((t) => ({ id: t.id, app: t.app, scope: t.scope, creado: t.creado }));
     return {
       usuario,
       apps,
@@ -330,20 +345,39 @@ export class AlmacenMemoria {
     };
   }
   async usuario(nombre) { return this.usuarios.get(String(nombre).toLowerCase()) || null; }
-  async guardarToken(t) { this.tokens.set(t.token, t); return t.token; }
-  async token(valor) { return this.tokens.get(valor) || null; }
-  async listarTokens(usuario) { return [...this.tokens.values()].filter((t) => t.usuario === usuario); }
+  async guardarToken({ token, usuario, scope, app, caduca }) {
+    const id = idToken();
+    this.tokens.set(id, {
+      id, huella: huellaToken(token), usuario, scope, app: app || 'app',
+      creado: new Date().toISOString(), caduca: caduca || null,
+    });
+    return id;
+  }
+  async token(valor) {
+    const h = huellaToken(valor);
+    for (const t of this.tokens.values()) {
+      if (t.huella === h || t.token === valor) return t;
+    }
+    return null;
+  }
+  async listarTokens(usuario) {
+    return [...this.tokens.values()].filter((t) => t.usuario === usuario)
+      .map(({ huella, token, ...resto }) => resto);
+  }
   async revocarToken(usuario, valor) {
-    const t = this.tokens.get(valor);
-    if (!t || t.usuario !== usuario) return false;
-    return this.tokens.delete(valor);
+    const h = huellaToken(valor);
+    for (const [k, t] of this.tokens.entries()) {
+      if (t.usuario !== usuario) continue;
+      if (t.id === String(valor) || t.huella === h || t.token === valor) return this.tokens.delete(k);
+    }
+    return false;
   }
   async todoDe(usuario) {
     return [...this.docs.values()]
       .filter((d) => d.usuario === usuario && !d.carpeta)
       .map((d) => ({
         path: d.path, tipo: d.tipo, etag: d.etag, fecha: d.fecha,
-        contenido: Buffer.from(d.cuerpo).toString('base64'),
+        contenido: this.cifrador.descifrar(d.cuerpo).toString('base64'),
       }));
   }
 

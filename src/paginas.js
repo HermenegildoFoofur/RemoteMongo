@@ -155,7 +155,7 @@ export function panelUsuario({ usuario, rol, dominio, endpoint, metadatos, cuota
         <div><strong>${esc(a.app)}</strong><br><span class="pastilla mono">${esc(a.scope)}</span>
         <span class="tenue" style="font-size:.8rem">desde ${esc((a.creado || '').slice(0, 10))}</span></div>
         <form method="post" action="/panel/revocar" class="m-0">
-          <input type="hidden" name="token" value="${esc(a.token)}">
+          <input type="hidden" name="id" value="${esc(a.id)}">
           <button class="btn btn-sm btn-outline-danger">Desconectar</button>
         </form>
       </div>`).join('')
@@ -220,7 +220,7 @@ export function panelAdmin({ usuarios, config, mensaje = '', error = '' }) {
         <span class="pastilla">${esc(a.app)} · ${esc(a.scope)}
           <form method="post" action="/admin/revocar" class="d-inline m-0">
             <input type="hidden" name="usuario" value="${esc(u.usuario)}">
-            <input type="hidden" name="token" value="${esc(a.token)}">
+            <input type="hidden" name="id" value="${esc(a.id)}">
             <button class="btn btn-link p-0 align-baseline" style="font-size:.8rem">desconectar</button>
           </form>
         </span>`).join('')}</div>
@@ -250,6 +250,17 @@ export function panelAdmin({ usuarios, config, mensaje = '', error = '' }) {
       </form>
       <p class="tenue mt-2 mb-0" style="font-size:.85rem">Cambiarla no borra nada: si alguien ya ocupa
       más, no podrá guardar cosas nuevas hasta bajar de su nuevo límite.</p>
+    </div>
+    <div class="tarjeta">
+      <h2>Cifrado en reposo</h2>
+      ${config.cifrado
+    ? '<p class="mb-1"><span class="pastilla bien">activo</span> AES-256-GCM</p>'
+      + '<p class="tenue mb-0" style="font-size:.85rem">Los cuerpos se guardan cifrados en MongoDB con una clave que vive en '
+      + '<span class="mono">state/instalacion.json</span>, fuera de la base. Quien tenga un dump o un backup de Mongo '
+      + 've rutas, tamaños y fechas, pero <strong>no el contenido</strong>.</p>'
+    : '<p class="mb-1"><span class="pastilla mal">inactivo</span></p>'
+      + '<p class="tenue mb-0" style="font-size:.85rem">Sin clave los cuerpos se guardan en claro. Define '
+      + '<span class="mono">RM_CLAVE_CIFRADO</span> (32 bytes en base64) o instala desde cero.</p>'}
     </div>
     <div class="tarjeta">
       <h2>Registro</h2>

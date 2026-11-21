@@ -76,29 +76,28 @@ a la base). La cuota se comprueba en cada `PUT`, contando el espacio real de la 
 
 El usuario ve su barra de ocupación en `/panel` y el administrador el reparto en `/admin`.
 
-## Cifrado: qué se puede y qué cuesta
+## Cifrado en reposo
 
-Hay dos sitios donde se puede cifrar y **no son lo mismo**:
+Los cuerpos de los documentos **se guardan cifrados** en MongoDB con **AES-256-GCM**, y la
+clave **no está en la base**: vive en `state/instalacion.json` (permisos `600`) o en
+`RM_CLAVE_CIFRADO`. Consecuencia práctica: **quien tenga un dump o un backup de Mongo ve
+rutas, tipos, tamaños y fechas, pero no puede leer el contenido** — falta la clave.
 
-1. **En el servidor, en reposo (AES-256-GCM con una clave maestra del servidor).** El coste es
-   despreciable: cifrar y descifrar 1 MB son unos pocos milisegundos y AES va acelerado por
-   hardware en cualquier CPU de los últimos quince años. Protege **el disco**: quien copie el
-   fichero de Mongo o un backup no lee nada. **No protege de mí mismo**: el servidor tiene la
-   clave y puede descifrar, así que el administrador técnico puede leer si quiere. Cambia el
-   formato de lo guardado (`cuerpo` pasa a `{ iv, tag, datos }`) y hay que migrar lo anterior.
-   Las apps no se enteran.
-2. **En el cliente, de punta a punta (la clave viaja con la app).** Aquí el servidor guarda
-   **blobs opacos**, sin poder leerlos jamás. Es lo único que de verdad impide que el
-   administrador lea, y es lo que hace Nextcloud con el cifrado de extremo a extremo. Pero
-   tiene un precio alto y no es de CPU: el servidor **deja de saber qué hay dentro** — no puede
-   indexar, ni validar JSON, ni buscar, ni hacer listados con metadatos útiles; el `ETag` pasa a
-   ser el del texto cifrado y cada cambio reescribe el fichero entero; **si la persona pierde la
-   clave, los datos se pierden para siempre** (no hay «recuperar contraseña»); y **cada app**
-   tendría que implementarlo, cosa que las apps de remoteStorage no hacen hoy.
+- Cada escritura lleva **IV nuevo** (GCM no lo admite repetido) y **etiqueta de integridad**:
+  si alguien toca los bytes guardados, al leer salta un error en vez de devolver basura.
+- El **ETag y el tamaño** son los del texto en claro, así que `If-Match`, los listados y las
+  cuotas siguen funcionando igual.
+- La **copia de seguridad** (`/panel/respaldo`) se sirve **en claro**, descifrada al vuelo.
+- Los **tokens de las apps no se guardan**: solo su `sha256`. Un dump tampoco sirve para
+  suplantar a nadie; en los paneles se revocan por identificador.
+- Si cambias o pierdes la clave, **lo ya guardado no se puede recuperar**: haz copia de
+  `instalacion.json` junto con el backup de Mongo.
 
-Recomendación: **empezar por el 1** (barato, transparente, protege backups y discos) y dejar el
-2 solo si algún día hay datos que ni el administrador deba poder leer —y entonces, por carpeta,
-no para todo el almacén. El 1 no está implementado todavía.
+Lo que **no** hace: no es cifrado de punta a punta. El servidor tiene la clave y por tanto
+puede descifrar — quien administre el servidor con acceso al fichero de instalación sí puede
+leer. Eso solo se consigue cifrando en el cliente, y entonces el servidor guardaría blobs
+opacos: sin listados útiles, sin cuotas por contenido, y **si se pierde la clave de la
+persona, los datos se pierden para siempre**. No está implementado.
 
 
 ## La API que exponen las apps
@@ -131,6 +130,7 @@ Todo por entorno o en un `.env` al lado del proyecto (ver `.env.example`):
 | **`RM_MONGO_DB`** | `remotemongo` | **base donde se guardan los datos** |
 | `RM_REGISTRO` | `si` | registro abierto o cerrado (también se cambia desde `/admin`) |
 | `RM_CUOTA_BASE` | `104857600` (100 MB) | cuota de espacio por cuenta, en bytes (también desde `/admin`, en MB) |
+| `RM_CLAVE_CIFRADO` | — (la genera `/instalar`) | clave de cifrado en reposo, 32 bytes en base64; **fuera** de MongoDB |
 
 Las variables **son opcionales cuando usas el asistente**: escribe la ruta de Mongo en
 `/instalar` y queda guardada en `state/instalacion.json`. Si defines `RM_MONGO_URL`,
@@ -149,10 +149,11 @@ Una sola colección hace de sistema de ficheros, porque el protocolo habla de ru
 colecciones consultables:
 
 - `documentos`: `{ usuario, path, tipo, etag, tamano, fecha, cuerpo }`, con índice **único**
-  por `(usuario, path)`. El `cuerpo` es binario (hasta 16 MB por documento; más grande, GridFS).
-- `usuarios`: `{ usuario, hash, sal, creado, activo }` — contraseña con **scrypt** y sal.
-- `tokens`: `{ token, usuario, scope, app, creado, caduca }` — uno por app; se revocan de uno
-  en uno.
+  por `(usuario, path)`. El `cuerpo` es binario y va **cifrado** (AES-256-GCM, hasta 16 MB por
+  documento; más grande, GridFS).
+- `usuarios`: `{ usuario, hash, sal, creado, activo, cuota? }` — contraseña con **scrypt** y sal.
+- `tokens`: `{ id, huella, usuario, scope, app, creado, caduca }` — uno por app, con **solo la
+  huella** del token; se revocan de uno en uno por `id`.
 
 El `ETag` es el `sha256` del contenido, así que escribir lo mismo dos veces no genera cambios
 y un `If-Match` viejo devuelve `412`.
@@ -163,7 +164,7 @@ y un `If-Match` viejo devuelve `412`.
 npm install
 cp .env.example .env      # y pon tu Mongo en RM_MONGO_URL
 npm start                 # http://localhost:8790
-npm test                  # 20 pruebas (protocolo, cuentas y cuotas), sin necesidad de Mongo
+npm test                  # 29 pruebas (protocolo, cuentas, cuotas y cifrado), sin necesidad de Mongo
 ```
 
 Para producción, systemd + un proxy con TLS delante (el repo de `webproxy` sirve) y
@@ -179,7 +180,7 @@ listados, **panel de usuario** (apps conectadas, consumo con barra de cuota, res
 activar/desactivar cuentas, cuotas por cuenta y cuota base, abrir o cerrar el registro).
 
 Pendiente y conocido:
-- Cifrado en reposo (ver más abajo: decisión de diseño, no está hecho).
+- Cifrado de punta a punta por carpeta (hoy el cifrado es en reposo: ver arriba).
 - Subida en streaming y GridFS para documentos grandes.
 - `remotestorage.js` de punta a punta contra este servidor desde una app real.
 - Suite de conformidad del protocolo (`rs.js` spec-check).

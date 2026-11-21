@@ -12,7 +12,8 @@ import {
   claveCorrecta, crearSal, hashClave, nuevoToken, permisosLegibles, pkceCorrecto, usuarioValido,
 } from './cuentas.js';
 import { cookieDe, crearSesion, leerSesion } from './sesiones.js';
-import { guardarAjustes, guardarInstalacion, leerInstalacion, CUOTA_BASE } from './instalacion.js';
+import { guardarAjustes, guardarInstalacion, leerInstalacion, claveDeCifrado, CUOTA_BASE } from './instalacion.js';
+import { crearCifrador, nuevaClave } from './cifrado.js';
 import {
   alta, avisoPagina, entrar, instalar, panelAdmin, panelUsuario, permiso, redirigir, respuesta,
 } from './paginas.js';
@@ -120,8 +121,9 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           if (!conectarMongo) return volver('Este servidor no puede conectar con MongoDB.');
 
           let nuevo;
+          const clave = nuevaClave();
           try {
-            nuevo = await conectarMongo(datos.mongoUrl, datos.mongoDb || 'remotemongo');
+            nuevo = await conectarMongo(datos.mongoUrl, datos.mongoDb || 'remotemongo', crearCifrador(clave));
           } catch (err) {
             return volver(`No pude conectar con MongoDB: ${err.message}`);
           }
@@ -131,10 +133,12 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
             dominio: datos.dominio,
             https: datos.https === 'on',
             puerto: ajustes.puerto,
+            claveCifrado: clave,
           });
           Object.assign(ajustes, {
             configurado: true, dominio: instalacion.dominio, https: instalacion.https,
             secreto: instalacion.secreto, mongoUrl: datos.mongoUrl, mongoDb: instalacion.mongoDb,
+            cifrado: true,
           });
           Object.assign(almacen, nuevo);   // el almacén pasa a ser el de Mongo
           const sal = crearSal();
@@ -390,7 +394,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         const cuenta = await sesionDe(req);
         if (!cuenta) return redirigir(res, '/entrar');
         const datos = form(await leerCuerpo(req));
-        await almacen.revocarToken(cuenta.usuario, datos.token);
+        await almacen.revocarToken(cuenta.usuario, datos.id || datos.token);
         return redirigir(res, '/panel');
       }
 
@@ -416,7 +420,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         if (req.method === 'POST') {
           const datos = form(await leerCuerpo(req));
           if (url.pathname === '/admin/revocar') {
-            await almacen.revocarToken(datos.usuario, datos.token);
+            await almacen.revocarToken(datos.usuario, datos.id || datos.token);
             return redirigir(res, '/admin');
           }
           if (url.pathname === '/admin/estado') {
@@ -461,7 +465,11 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         }
         return respuesta(res, 200, panelAdmin({
           usuarios,
-          config: { registroAbierto: ajustes.registroAbierto, cuotaBase: ajustes.cuotaBase },
+          config: {
+            registroAbierto: ajustes.registroAbierto,
+            cuotaBase: ajustes.cuotaBase,
+            cifrado: Boolean(ajustes.cifrado),
+          },
           error: url.searchParams.get('error') === 'cuota' ? 'Esa cuota no vale: pon un número de MB mayor que cero.' : '',
         }));
       }
@@ -485,16 +493,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { MongoClient } = await import('mongodb');
   const instalacion = leerInstalacion();
 
-  const conectarMongo = async (url, db) => {
+  // La clave de cifrado vive en instalacion.json, nunca en MongoDB.
+  const cifrador = crearCifrador(instalacion.configurado ? claveDeCifrado(instalacion) : null);
+
+  const conectarMongo = async (url, db, propio = cifrador) => {
     const cliente = new MongoClient(url, { serverSelectionTimeoutMS: 5000 });
     await cliente.connect();
     await cliente.db(db).command({ ping: 1 });
-    return AlmacenMongo.preparar(cliente.db(db));
+    return AlmacenMongo.preparar(cliente.db(db), propio);
   };
 
   const almacen = instalacion.configurado
     ? await conectarMongo(instalacion.mongoUrl, instalacion.mongoDb)
-    : await AlmacenMemoria.preparar();
+    : await AlmacenMemoria.preparar(cifrador);
 
   const config = {
     configurado: instalacion.configurado,
@@ -506,11 +517,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     mongoDb: instalacion.mongoDb,
     puerto: instalacion.puerto,
     cuotaBase: instalacion.cuotaBase,
+    cifrado: cifrador.activo,
   };
 
   const servidor = crearServidor({ almacen, config, conectarMongo });
   servidor.listen(config.puerto, '0.0.0.0', () => {
-    console.log(`remotemongo: :${config.puerto} · ${config.configurado ? config.dominio : 'SIN INSTALAR (/instalar)'}`);
+    console.log(`remotemongo: :${config.puerto} · ${config.configurado ? config.dominio : 'SIN INSTALAR (/instalar)'}`
+      + ` · cifrado ${cifrador.activo ? 'activo' : 'INACTIVO'}`);
   });
   for (const senal of ['SIGTERM', 'SIGINT']) {
     process.on(senal, () => servidor.close(() => process.exit(0)));
