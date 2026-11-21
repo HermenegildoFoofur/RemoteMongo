@@ -56,7 +56,11 @@ const form = (cuerpo) => Object.fromEntries(new URLSearchParams(cuerpo.toString(
  */
 export function crearServidor({ almacen, config, conectarMongo = null }) {
   const codigos = new Map();
-  const ajustes = { ...config, cuotaBase: Number(config.cuotaBase) || CUOTA_BASE };
+  const ajustes = {
+    ...config,
+    dominio: config.dominio || `localhost:${config.puerto || 8790}`,
+    cuotaBase: Number(config.cuotaBase) || CUOTA_BASE,
+  };
   const base = () => `${ajustes.https ? 'https' : 'http'}://${ajustes.dominio}`;
 
   /** Cuota que se le aplica a una cuenta: la suya si la tiene, si no la base del servidor. */
@@ -140,7 +144,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
             secreto: instalacion.secreto, mongoUrl: datos.mongoUrl, mongoDb: instalacion.mongoDb,
             cifrado: true,
           });
-          Object.assign(almacen, nuevo);   // el almacén pasa a ser el de Mongo
+          almacen = nuevo;   // desde aquí todo (datos y cuentas) va contra Mongo
           const sal = crearSal();
           await almacen.crearUsuario({
             usuario: String(datos.admin).toLowerCase(), hash: hashClave(datos.clave, sal), sal, rol: 'admin',

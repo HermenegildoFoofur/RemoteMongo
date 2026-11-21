@@ -12,7 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { nuevaClave } from './cifrado.js';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const FICHERO = process.env.RM_INSTALACION || path.join(RAIZ, 'state', 'instalacion.json');
+/** Ruta del fichero de instalación (se lee en cada uso, para poder aislarla en pruebas). */
+const ruta = () => process.env.RM_INSTALACION || path.join(RAIZ, 'state', 'instalacion.json');
+export const FICHERO = ruta();
 
 /** Cuota de espacio por defecto de cada cuenta: 100 MB (se cambia desde /admin). */
 export const CUOTA_BASE = 100 * 1024 * 1024;
@@ -34,7 +36,7 @@ export function leerInstalacion() {
     };
   }
   try {
-    const datos = JSON.parse(readFileSync(FICHERO, 'utf8'));
+    const datos = JSON.parse(readFileSync(ruta(), 'utf8'));
     if (datos && datos.mongoUrl && datos.dominio) {
       return {
         ...datos,
@@ -86,7 +88,7 @@ export function claveDeCifrado(datos = null) {
 /** Cambia ajustes sueltos (cuota base, registro abierto) sin tocar el secreto. */
 export function guardarAjustes(cambios = {}) {
   let datos = null;
-  try { datos = JSON.parse(readFileSync(FICHERO, 'utf8')); } catch { /* sin fichero */ }
+  try { datos = JSON.parse(readFileSync(ruta(), 'utf8')); } catch { /* sin fichero */ }
   if (!datos) return null;   // en modo entorno no hay fichero: solo vive en memoria
   const nuevos = { ...datos, ...cambios };
   escribirFichero(nuevos);
@@ -94,9 +96,9 @@ export function guardarAjustes(cambios = {}) {
 }
 
 function escribirFichero(datos) {
-  mkdirSync(path.dirname(FICHERO), { recursive: true });
-  writeFileSync(FICHERO, JSON.stringify(datos, null, 2), { mode: 0o600 });
-  try { chmodSync(FICHERO, 0o600); } catch { /* si no se puede, se queda como esté */ }
+  mkdirSync(path.dirname(ruta()), { recursive: true });
+  writeFileSync(ruta(), JSON.stringify(datos, null, 2), { mode: 0o600 });
+  try { chmodSync(ruta(), 0o600); } catch { /* si no se puede, se queda como esté */ }
 }
 
-export const existeInstalacion = () => existsSync(FICHERO);
+export const existeInstalacion = () => existsSync(ruta());
