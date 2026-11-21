@@ -9,7 +9,11 @@ h1{font-size:1.5rem}h2{font-size:1.1rem;color:#b9c6d8}
 .tenue{color:#93a0b4}a{color:#6fb1ff}
 .pastilla{display:inline-block;background:#0f1115;border:1px solid #262b36;border-radius:999px;padding:2px 10px;font-size:.8rem;margin:0 6px 6px 0}
 .mal{background:#3a1d1d;border-color:#7a2e2e;color:#ffd9d9}
-.bien{background:#17301f;border-color:#2e6b43;color:#d8ffe4}`;
+.bien{background:#17301f;border-color:#2e6b43;color:#d8ffe4}
+.barra{background:#0f1115;border:1px solid #262b36;border-radius:999px;height:10px;overflow:hidden;margin:8px 0}
+.barra-llena{height:100%;background:#3b6fe0}
+.barra-llena.apurado{background:#c9a227}
+.barra-llena.llena{background:#a13b3b}`;
 
 const esc = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -140,7 +144,12 @@ export function alta({ abierto = true, error = '', creada = null } = {}) {
 }
 
 /* ------------------------------------------------------------ panel usuario */
-export function panelUsuario({ usuario, rol, dominio, endpoint, metadatos }) {
+export function panelUsuario({ usuario, rol, dominio, endpoint, metadatos, cuota = 0 }) {
+  const usado = Number(metadatos.totalBytes) || 0;
+  const tope = Number(cuota) || 0;
+  const pct = tope > 0 ? Math.min(100, Math.round((usado / tope) * 100)) : 0;
+  const resto = Math.max(0, tope - usado);
+  const clase = pct >= 100 ? ' llena' : pct >= 90 ? ' apurado' : '';
   const apps = metadatos.apps.length
     ? metadatos.apps.map((a) => `<div class="d-flex justify-content-between align-items-center border-top pt-2 mt-2">
         <div><strong>${esc(a.app)}</strong><br><span class="pastilla mono">${esc(a.scope)}</span>
@@ -170,7 +179,11 @@ export function panelUsuario({ usuario, rol, dominio, endpoint, metadatos }) {
     </div>
     <div class="tarjeta">
       <h2>Lo que ocupas</h2>
-      <p class="mb-1"><strong>${kb(metadatos.totalBytes)}</strong> en total</p>
+      <p class="mb-1"><strong>${kb(usado)}</strong> de <strong>${kb(tope)}</strong>
+        <span class="tenue">(${pct} %)</span></p>
+      <div class="barra"><div class="barra-llena${clase}" style="width:${pct}%"></div></div>
+      <p class="tenue" style="font-size:.85rem">Te quedan <strong>${kb(resto)}</strong>.
+        Si se llena, las apps reciben un aviso y no se guarda nada más hasta que borres algo.</p>
       ${categorias}
       <p class="mt-3 mb-0"><a class="btn btn-sm btn-outline-secondary" href="/panel/respaldo">Descargar copia (JSON)</a></p>
     </div>`,
@@ -178,13 +191,22 @@ export function panelUsuario({ usuario, rol, dominio, endpoint, metadatos }) {
 }
 
 /* --------------------------------------------------------- administración */
-export function panelAdmin({ usuarios, config, mensaje = '' }) {
+export function panelAdmin({ usuarios, config, mensaje = '', error = '' }) {
   const filas = usuarios.map((u) => `
     <tr>
       <td class="mono">${esc(u.usuario)}${u.rol === 'admin' ? ' <span class="pastilla">admin</span>' : ''}</td>
       <td>${u.activo === false ? '<span class="pastilla mal">desactivada</span>' : '<span class="pastilla bien">activa</span>'}</td>
       <td class="text-end">${u.apps.length}</td>
-      <td class="text-end mono">${kb(u.totalBytes)}</td>
+      <td class="text-end mono">${kb(u.totalBytes)} de ${kb(u.cuota)}
+        <form method="post" action="/admin/cuota" class="m-0 d-inline-flex gap-1 mt-1">
+          <input type="hidden" name="usuario" value="${esc(u.usuario)}">
+          <input class="form-control form-control-sm mono text-end" style="width:80px" name="mb"
+                 inputmode="decimal" placeholder="${u.cuotaPropia ? 'base' : (u.cuota / 1048576).toFixed(0)}"
+                 title="Cuota en MB. Vacío o «base» = la cuota del servidor">
+          <button class="btn btn-sm btn-outline-secondary">MB</button>
+        </form>
+        <div class="tenue" style="font-size:.75rem">${u.cuotaPropia ? 'cuota propia' : 'cuota del servidor'}</div>
+      </td>
       <td class="text-end">
         <form method="post" action="/admin/estado" class="m-0 d-inline">
           <input type="hidden" name="usuario" value="${esc(u.usuario)}">
@@ -206,14 +228,28 @@ export function panelAdmin({ usuarios, config, mensaje = '' }) {
 
   return pagina('Administración', `
     ${mensaje ? `<div class="alert alert-success py-2">${esc(mensaje)}</div>` : ''}
+    ${error ? `<div class="alert alert-danger py-2">${esc(error)}</div>` : ''}
     <div class="tarjeta">
       <h1>Administración</h1>
       <p class="tenue">Esto es solo <strong>metadatos</strong>: apps conectadas y espacio ocupado.
       El contenido de las cuentas no se puede leer desde aquí.</p>
       <table class="table table-dark table-sm align-middle">
-        <thead><tr><th>Usuario</th><th>Estado</th><th class="text-end">Apps</th><th class="text-end">Datos</th><th></th></tr></thead>
+        <thead><tr><th>Usuario</th><th>Estado</th><th class="text-end">Apps</th><th class="text-end">Ocupa / cuota</th><th></th></tr></thead>
         <tbody>${filas || '<tr><td colspan="5" class="tenue">Sin cuentas</td></tr>'}</tbody>
       </table>
+    </div>
+    <div class="tarjeta">
+      <h2>Cuota de espacio por defecto</h2>
+      <p class="tenue">Lo que puede ocupar cada cuenta que no tenga una cuota propia.
+      Ahora mismo: <strong>${kb(config.cuotaBase)}</strong>.</p>
+      <form method="post" action="/admin/cuota-base" class="d-flex gap-2 align-items-end">
+        <div><label class="form-label" style="font-size:.85rem">MB por cuenta</label>
+          <input class="form-control mono" name="mb" inputmode="decimal" style="width:120px"
+                 value="${(config.cuotaBase / 1048576).toFixed(0)}" required></div>
+        <button class="btn btn-sm btn-outline-secondary mb-1">Guardar</button>
+      </form>
+      <p class="tenue mt-2 mb-0" style="font-size:.85rem">Cambiarla no borra nada: si alguien ya ocupa
+      más, no podrá guardar cosas nuevas hasta bajar de su nuevo límite.</p>
     </div>
     <div class="tarjeta">
       <h2>Registro</h2>

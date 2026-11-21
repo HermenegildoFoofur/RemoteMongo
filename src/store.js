@@ -43,7 +43,7 @@ export class AlmacenMongo {
     };
   }
 
-  async escribir(usuario, ruta, cuerpo, tipo, { ifMatch, ifNoneMatch } = {}) {
+  async escribir(usuario, ruta, cuerpo, tipo, { ifMatch, ifNoneMatch, cuotaMax } = {}) {
     const path = normal(ruta);
     const buffer = Buffer.isBuffer(cuerpo) ? cuerpo : Buffer.from(cuerpo);
     const etag = etagDe(buffer);
@@ -52,6 +52,12 @@ export class AlmacenMongo {
     if (ifNoneMatch === '*' && actual) return { conflicto: 'existe' };
     if (ifMatch && (!actual || actual.etag !== ifMatch)) return { conflicto: 'etag' };
     if (actual && actual.etag === etag) return { sinCambios: true, etag };
+
+    if (cuotaMax != null) {
+      const usado = await this.totalUsado(usuario);
+      const quedaria = usado - (actual ? actual.tamano : 0) + buffer.length;
+      if (quedaria > cuotaMax) return { conflicto: 'cuota', usado, cuota: cuotaMax, quedaria };
+    }
 
     await this.docs.updateOne(
       { usuario, path },
@@ -103,11 +109,28 @@ export class AlmacenMongo {
   }
 
   /* --------------------------------------------------------------- usuarios */
-  async crearUsuario({ usuario, hash, sal, rol = 'usuario' }) {
+  async crearUsuario({ usuario, hash, sal, rol = 'usuario', cuota = null }) {
     await this.usuarios.insertOne({
       usuario, hash, sal, rol, creado: new Date().toISOString(), activo: true,
+      ...(cuota != null ? { cuota } : {}),
     });
     return { usuario, rol };
+  }
+
+  /** Cuota propia de la cuenta, o null para que mande la cuota base del servidor. */
+  async cambiarCuota(usuario, cuota) {
+    const cambio = cuota == null ? { $unset: { cuota: '' } } : { $set: { cuota: Number(cuota) } };
+    const r = await this.usuarios.updateOne({ usuario: String(usuario).toLowerCase() }, cambio);
+    return r.matchedCount > 0;
+  }
+
+  /** Bytes ocupados por una cuenta (suma de sus documentos, sin contar carpetas). */
+  async totalUsado(usuario) {
+    const r = await this.docs.aggregate([
+      { $match: { usuario, carpeta: false } },
+      { $group: { _id: null, bytes: { $sum: '$tamano' } } },
+    ]).toArray();
+    return r[0]?.bytes || 0;
   }
 
   /** Lista de cuentas para el panel: sin hash ni sal (el admin no ve credenciales). */
@@ -220,7 +243,7 @@ export class AlmacenMemoria {
     return { cuerpo: d.cuerpo, tipo: d.tipo, etag: d.etag, fecha: d.fecha };
   }
 
-  async escribir(usuario, ruta, cuerpo, tipo, { ifMatch, ifNoneMatch } = {}) {
+  async escribir(usuario, ruta, cuerpo, tipo, { ifMatch, ifNoneMatch, cuotaMax } = {}) {
     const k = this.clave(usuario, ruta);
     const buffer = Buffer.isBuffer(cuerpo) ? cuerpo : Buffer.from(cuerpo);
     const etag = etagDe(buffer);
@@ -228,6 +251,11 @@ export class AlmacenMemoria {
     if (ifNoneMatch === '*' && actual) return { conflicto: 'existe' };
     if (ifMatch && (!actual || actual.etag !== ifMatch)) return { conflicto: 'etag' };
     if (actual && actual.etag === etag) return { sinCambios: true, etag };
+    if (cuotaMax != null) {
+      const usado = await this.totalUsado(usuario);
+      const quedaria = usado - (actual ? actual.tamano : 0) + buffer.length;
+      if (quedaria > cuotaMax) return { conflicto: 'cuota', usado, cuota: cuotaMax, quedaria };
+    }
     this.docs.set(k, {
       usuario, path: normal(ruta), carpeta: false, cuerpo: buffer,
       tipo: tipo || 'application/octet-stream', etag, tamano: buffer.length,
@@ -266,6 +294,20 @@ export class AlmacenMemoria {
     const conRol = { rol: 'usuario', activo: true, ...u };
     this.usuarios.set(String(conRol.usuario).toLowerCase(), conRol);
     return conRol;
+  }
+  async cambiarCuota(usuario, cuota) {
+    const u = this.usuarios.get(String(usuario).toLowerCase());
+    if (!u) return false;
+    if (cuota == null) delete u.cuota;
+    else u.cuota = Number(cuota);
+    return true;
+  }
+  async totalUsado(usuario) {
+    let total = 0;
+    for (const d of this.docs.values()) {
+      if (d.usuario === usuario && !d.carpeta) total += d.tamano;
+    }
+    return total;
   }
   async listarUsuarios() {
     return [...this.usuarios.values()].map(({ hash, sal, ...resto }) => resto);

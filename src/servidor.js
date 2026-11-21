@@ -12,7 +12,7 @@ import {
   claveCorrecta, crearSal, hashClave, nuevoToken, permisosLegibles, pkceCorrecto, usuarioValido,
 } from './cuentas.js';
 import { cookieDe, crearSesion, leerSesion } from './sesiones.js';
-import { guardarInstalacion, leerInstalacion } from './instalacion.js';
+import { guardarAjustes, guardarInstalacion, leerInstalacion, CUOTA_BASE } from './instalacion.js';
 import {
   alta, avisoPagina, entrar, instalar, panelAdmin, panelUsuario, permiso, redirigir, respuesta,
 } from './paginas.js';
@@ -55,8 +55,14 @@ const form = (cuerpo) => Object.fromEntries(new URLSearchParams(cuerpo.toString(
  */
 export function crearServidor({ almacen, config, conectarMongo = null }) {
   const codigos = new Map();
-  const ajustes = { ...config };
+  const ajustes = { ...config, cuotaBase: Number(config.cuotaBase) || CUOTA_BASE };
   const base = () => `${ajustes.https ? 'https' : 'http'}://${ajustes.dominio}`;
+
+  /** Cuota que se le aplica a una cuenta: la suya si la tiene, si no la base del servidor. */
+  const cuotaDe = async (usuario) => {
+    const cuenta = await almacen.usuario(usuario);
+    return cuenta && cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase;
+  };
 
   /** Usuario de la sesión, comprobado contra la base (y que siga activo). */
   async function sesionDe(req) {
@@ -287,12 +293,21 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         if (req.method === 'PUT') {
           if (esCarpeta) return json(res, 400, { error: 'no se puede escribir en una carpeta sin nombre' });
           const cuerpo = await leerCuerpo(req);
+          const cuotaMax = await cuotaDe(usuario);
           const r = await almacen.escribir(usuario, ruta, cuerpo, req.headers['content-type'], {
             ifMatch: req.headers['if-match'],
             ifNoneMatch: req.headers['if-none-match'],
+            cuotaMax,
           });
           if (r.conflicto === 'existe') return json(res, 412, { error: 'ya existe' });
           if (r.conflicto === 'etag') return json(res, 412, { error: 'el ETag no cuadra' });
+          if (r.conflicto === 'cuota') {
+            return json(res, 413, {
+              error: 'cuota de espacio superada',
+              usado: r.usado, cuota: r.cuota,
+              detalle: `Ocupas ${r.usado} B de ${r.cuota} B. Borra algo o pide más espacio.`,
+            });
+          }
           if (r.sinCambios) {
             res.writeHead(304, { ...CABECERAS_CORS, ETag: r.etag });
             return res.end();
@@ -367,6 +382,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         return respuesta(res, 200, panelUsuario({
           usuario: cuenta.usuario, rol: cuenta.rol || 'usuario', dominio: ajustes.dominio,
           endpoint: `${base()}/storage/${cuenta.usuario}/`, metadatos,
+          cuota: cuenta.cuota != null ? Number(cuenta.cuota) : ajustes.cuotaBase,
         }));
       }
 
@@ -409,6 +425,26 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           }
           if (url.pathname === '/admin/registro') {
             ajustes.registroAbierto = datos.abierto === '1';
+            guardarAjustes({ registroAbierto: ajustes.registroAbierto });
+            return redirigir(res, '/admin');
+          }
+          if (url.pathname === '/admin/cuota') {
+            // En MB. Vacío o «base» = quitar la cuota propia y usar la del servidor.
+            const valor = String(datos.mb || '').trim().replace(',', '.');
+            if (!valor || valor.toLowerCase() === 'base') {
+              await almacen.cambiarCuota(datos.usuario, null);
+              return redirigir(res, '/admin');
+            }
+            const mb = Number(valor);
+            if (!Number.isFinite(mb) || mb <= 0) return redirigir(res, '/admin?error=cuota');
+            await almacen.cambiarCuota(datos.usuario, Math.round(mb * 1024 * 1024));
+            return redirigir(res, '/admin');
+          }
+          if (url.pathname === '/admin/cuota-base') {
+            const mb = Number(String(datos.mb || '').trim().replace(',', '.'));
+            if (!Number.isFinite(mb) || mb <= 0) return redirigir(res, '/admin?error=cuota');
+            ajustes.cuotaBase = Math.round(mb * 1024 * 1024);
+            guardarAjustes({ cuotaBase: ajustes.cuotaBase });
             return redirigir(res, '/admin');
           }
         }
@@ -419,10 +455,14 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           usuarios.push({
             usuario: u.usuario, rol: u.rol, activo: u.activo,
             apps: m.apps, totalBytes: m.totalBytes,
+            cuota: u.cuota != null ? Number(u.cuota) : ajustes.cuotaBase,
+            cuotaPropia: u.cuota != null,
           });
         }
         return respuesta(res, 200, panelAdmin({
-          usuarios, config: { registroAbierto: ajustes.registroAbierto },
+          usuarios,
+          config: { registroAbierto: ajustes.registroAbierto, cuotaBase: ajustes.cuotaBase },
+          error: url.searchParams.get('error') === 'cuota' ? 'Esa cuota no vale: pon un número de MB mayor que cero.' : '',
         }));
       }
 
@@ -465,6 +505,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     mongoUrl: instalacion.mongoUrl,
     mongoDb: instalacion.mongoDb,
     puerto: instalacion.puerto,
+    cuotaBase: instalacion.cuotaBase,
   };
 
   const servidor = crearServidor({ almacen, config, conectarMongo });

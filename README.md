@@ -55,12 +55,50 @@ y botón de desconectar, y lo que ocupa por categoría. Incluye **«Descargar co
 todos sus documentos en JSON.
 
 **`/admin` (solo la cuenta de administración).** Lista de cuentas con **estado**, número de
-**apps conectadas** y **espacio ocupado**; puede **desconectar apps de cualquier usuario**,
-**activar o desactivar cuentas** y **abrir o cerrar el registro**.
+**apps conectadas**, **espacio ocupado / cuota**; puede **desconectar apps de cualquier usuario**,
+**activar o desactivar cuentas**, **poner cuotas de espacio** y **abrir o cerrar el registro**.
 
 Y lo importante: por ahí **no se puede leer ningún dato de nadie**. El panel solo consulta
 metadatos (recuentos y tamaños); el contenido de las cuentas no se sirve ni con sesión de
 administración. El administrador tiene su propio almacén como cualquier usuario, en `/panel`.
+
+## Cuotas de espacio
+
+Hay una **cuota base** para todas las cuentas (100 MB por defecto, `RM_CUOTA_BASE` o desde
+`/admin`) y cada cuenta puede tener **la suya** (se pone en MB en `/admin`, o vacío para volver
+a la base). La cuota se comprueba en cada `PUT`, contando el espacio real de la cuenta:
+
+- reescribir un documento **no cuenta doble** (solo la diferencia de tamaño),
+- borrar **libera** sitio al momento,
+- si no cabe, el `PUT` devuelve **413** con `{ error, usado, cuota }` y el documento no se toca,
+- bajar la cuota base **no borra nada**: quien esté por encima deja de poder escribir hasta
+  que baje de su límite.
+
+El usuario ve su barra de ocupación en `/panel` y el administrador el reparto en `/admin`.
+
+## Cifrado: qué se puede y qué cuesta
+
+Hay dos sitios donde se puede cifrar y **no son lo mismo**:
+
+1. **En el servidor, en reposo (AES-256-GCM con una clave maestra del servidor).** El coste es
+   despreciable: cifrar y descifrar 1 MB son unos pocos milisegundos y AES va acelerado por
+   hardware en cualquier CPU de los últimos quince años. Protege **el disco**: quien copie el
+   fichero de Mongo o un backup no lee nada. **No protege de mí mismo**: el servidor tiene la
+   clave y puede descifrar, así que el administrador técnico puede leer si quiere. Cambia el
+   formato de lo guardado (`cuerpo` pasa a `{ iv, tag, datos }`) y hay que migrar lo anterior.
+   Las apps no se enteran.
+2. **En el cliente, de punta a punta (la clave viaja con la app).** Aquí el servidor guarda
+   **blobs opacos**, sin poder leerlos jamás. Es lo único que de verdad impide que el
+   administrador lea, y es lo que hace Nextcloud con el cifrado de extremo a extremo. Pero
+   tiene un precio alto y no es de CPU: el servidor **deja de saber qué hay dentro** — no puede
+   indexar, ni validar JSON, ni buscar, ni hacer listados con metadatos útiles; el `ETag` pasa a
+   ser el del texto cifrado y cada cambio reescribe el fichero entero; **si la persona pierde la
+   clave, los datos se pierden para siempre** (no hay «recuperar contraseña»); y **cada app**
+   tendría que implementarlo, cosa que las apps de remoteStorage no hacen hoy.
+
+Recomendación: **empezar por el 1** (barato, transparente, protege backups y discos) y dejar el
+2 solo si algún día hay datos que ni el administrador deba poder leer —y entonces, por carpeta,
+no para todo el almacén. El 1 no está implementado todavía.
 
 
 ## La API que exponen las apps
@@ -92,6 +130,7 @@ Todo por entorno o en un `.env` al lado del proyecto (ver `.env.example`):
 | **`RM_MONGO_URL`** | `mongodb://127.0.0.1:27017` | **la ruta a MongoDB** |
 | **`RM_MONGO_DB`** | `remotemongo` | **base donde se guardan los datos** |
 | `RM_REGISTRO` | `si` | registro abierto o cerrado (también se cambia desde `/admin`) |
+| `RM_CUOTA_BASE` | `104857600` (100 MB) | cuota de espacio por cuenta, en bytes (también desde `/admin`, en MB) |
 
 Las variables **son opcionales cuando usas el asistente**: escribe la ruta de Mongo en
 `/instalar` y queda guardada en `state/instalacion.json`. Si defines `RM_MONGO_URL`,
@@ -124,7 +163,7 @@ y un `If-Match` viejo devuelve `412`.
 npm install
 cp .env.example .env      # y pon tu Mongo en RM_MONGO_URL
 npm start                 # http://localhost:8790
-npm test                  # 7 pruebas del protocolo, sin necesidad de Mongo
+npm test                  # 20 pruebas (protocolo, cuentas y cuotas), sin necesidad de Mongo
 ```
 
 Para producción, systemd + un proxy con TLS delante (el repo de `webproxy` sirve) y
@@ -135,11 +174,12 @@ fragmento del token lo exigen.
 
 Primera versión funcional: **asistente de instalación**, entrada y alta de cuentas, sesiones
 por cookie firmada, descubrimiento, OAuth con PKCE (y flujo clásico), almacén con ETags y
-listados, **panel de usuario** (apps conectadas, consumo, respaldo) y **panel de
-administración solo con metadatos** (apps, espacio, desconectar apps, activar/desactivar
-cuentas, abrir o cerrar el registro).
+listados, **panel de usuario** (apps conectadas, consumo con barra de cuota, respaldo),
+**panel de administración solo con metadatos** (apps, espacio, desconectar apps,
+activar/desactivar cuentas, cuotas por cuenta y cuota base, abrir o cerrar el registro).
 
 Pendiente y conocido:
+- Cifrado en reposo (ver más abajo: decisión de diseño, no está hecho).
 - Subida en streaming y GridFS para documentos grandes.
 - `remotestorage.js` de punta a punta contra este servidor desde una app real.
 - Suite de conformidad del protocolo (`rs.js` spec-check).
