@@ -100,6 +100,17 @@ opacos: sin listados útiles, sin cuotas por contenido, y **si se pierde la clav
 persona, los datos se pierden para siempre**. No está implementado.
 
 
+## La ruta de instalación
+
+La web **no usa rutas absolutas**: el asistente pregunta en qué ruta vive (vacío = la raíz del
+dominio) y todo se genera con esa ruta delante — enlaces, formularios, `/api/*`, el CSS, Vue y
+los endpoints que se anuncian a las apps (`/storage/<usuario>/` y `/oauth/<usuario>`).
+
+Así se puede publicar en `https://midominio/remotemongo/` sin tocar el código, y sigue
+funcionando igual detrás de un proxy que **quite** el prefijo (como `tailscale serve
+--set-path`): el servidor acepta las peticiones con la ruta o sin ella, pero siempre la
+escribe en lo que devuelve.
+
 ## La API que exponen las apps
 
 | Método | Ruta | Qué hace |
@@ -137,6 +148,7 @@ Todo por entorno o en un `.env` al lado del proyecto (ver `.env.example`):
 | **`RM_MONGO_URL`** | `mongodb://127.0.0.1:27017` | **la ruta a MongoDB** |
 | **`RM_MONGO_DB`** | `remotemongo` | **base donde se guardan los datos** |
 | `RM_REGISTRO` | `si` | registro abierto o cerrado (también se cambia desde `/admin`) |
+| `RM_RUTA_BASE` | vacío (raíz) | ruta donde vive la web, p. ej. `/remotemongo` (también se pide en el asistente) |
 | `RM_CUOTA_BASE` | `104857600` (100 MB) | cuota de espacio por cuenta, en bytes (también desde `/admin`, en MB) |
 | `RM_CLAVE_CIFRADO` | — (la genera `/instalar`) | clave de cifrado en reposo, 32 bytes en base64; **fuera** de MongoDB |
 

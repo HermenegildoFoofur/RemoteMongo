@@ -16,6 +16,14 @@ const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ruta = () => process.env.RM_INSTALACION || path.join(RAIZ, 'state', 'instalacion.json');
 export const FICHERO = ruta();
 
+/** «/remotemongo/» → «/remotemongo»; «/» o vacío → «» (raíz). */
+export function normalizarRutaBase(valor) {
+  let v = String(valor ?? '').trim();
+  if (!v || v === '/') return '';
+  if (!v.startsWith('/')) v = `/${v}`;
+  return v.replace(/\/+$/, '');
+}
+
 /** Cuota de espacio por defecto de cada cuenta: 100 MB (se cambia desde /admin). */
 export const CUOTA_BASE = 100 * 1024 * 1024;
 
@@ -31,6 +39,7 @@ export function leerInstalacion() {
       secreto: process.env.RM_SECRETO || process.env.RM_ADMIN_TOKEN,
       puerto: Number(process.env.RM_PORT || 8790),
       cuotaBase: Number(process.env.RM_CUOTA_BASE) || CUOTA_BASE,
+      rutaBase: normalizarRutaBase(process.env.RM_RUTA_BASE),
       claveCifrado: process.env.RM_CLAVE_CIFRADO || null,
       origen: 'entorno',
     };
@@ -41,6 +50,7 @@ export function leerInstalacion() {
       return {
         ...datos,
         cuotaBase: Number(datos.cuotaBase) || CUOTA_BASE,
+        rutaBase: normalizarRutaBase(datos.rutaBase),
         claveCifrado: datos.claveCifrado || null,
         configurado: true,
       };
@@ -54,10 +64,11 @@ export function leerInstalacion() {
     mongoDb: process.env.RM_MONGO_DB || 'remotemongo',
     dominio: '',
     cuotaBase: Number(process.env.RM_CUOTA_BASE) || CUOTA_BASE,
+    rutaBase: normalizarRutaBase(process.env.RM_RUTA_BASE),
   };
 }
 
-export function guardarInstalacion({ mongoUrl, mongoDb, dominio, https = true, puerto, cuotaBase, claveCifrado }) {
+export function guardarInstalacion({ mongoUrl, mongoDb, dominio, https = true, puerto, cuotaBase, claveCifrado, rutaBase }) {
   const datos = {
     configurado: true,
     mongoUrl,
@@ -68,6 +79,7 @@ export function guardarInstalacion({ mongoUrl, mongoDb, dominio, https = true, p
     claveCifrado: claveCifrado || nuevaClave(),
     puerto: Number(puerto) || 8790,
     cuotaBase: Number(cuotaBase) || CUOTA_BASE,
+    rutaBase: normalizarRutaBase(rutaBase),
     fecha: new Date().toISOString(),
   };
   escribirFichero(datos);

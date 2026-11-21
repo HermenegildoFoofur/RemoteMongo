@@ -25,8 +25,13 @@ const kb = (bytes) => {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 };
 
-function pagina(titulo, cuerpo, { nav = null } = {}) {
-  return `<!doctype html><html lang="es"><head>
+/** Pone delante la ruta de instalación a todo lo que empieza por «/». */
+const prefijar = (html, raiz) => html
+  .replace(/(href|action|src)="\//g, `$1="${raiz}/`)
+  .replace(/fetch\('\//g, `fetch('${raiz}/`);
+
+function pagina(titulo, cuerpo, { nav = null, raiz = '' } = {}) {
+  const html = `<!doctype html><html lang="es"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(titulo)} · RemoteMongo</title>
 <link rel="stylesheet" href="/bootstrap.min.css"><style>${CSS}</style></head><body>
@@ -38,6 +43,7 @@ ${nav ? `<div class="d-flex justify-content-between align-items-center mb-3">
 ${cuerpo}
 <p class="tenue text-center mt-4" style="font-size:.8rem">RemoteMongo · remoteStorage sobre MongoDB</p>
 </div></body></html>`;
+  return raiz ? prefijar(html, raiz) : html;
 }
 
 export function respuesta(res, codigo, html, cabeceras = {}) {
@@ -51,13 +57,13 @@ export const redirigir = (res, destino, cabeceras = {}) => {
 };
 
 /* ------------------------------------------------------------- instalación */
-export function instalar({ valores = {}, error = '', paso = 'formulario' } = {}) {
+export function instalar({ valores = {}, error = '', paso = 'formulario', raiz = '' } = {}) {
   if (paso === 'hecho') {
     return pagina('Instalado', `<div class="tarjeta">
       <h1>Ya está instalado 🎉</h1>
       <p class="tenue">Entra con la cuenta de administración que acabas de crear.</p>
       <a class="btn btn-primary" href="/entrar">Entrar</a>
-    </div>`);
+    </div>`, { raiz });
   }
   return pagina('Instalar', `<div class="tarjeta">
     <h1>Primera configuración</h1>
@@ -80,6 +86,13 @@ export function instalar({ valores = {}, error = '', paso = 'formulario' } = {})
         <input class="form-check-input" type="checkbox" name="https" id="https" ${valores.https === false ? '' : 'checked'}>
         <label class="form-check-label" for="https">Va detrás de un proxy con TLS (recomendado)</label>
       </div>
+      <label class="form-label mt-3">Ruta de instalación (dónde vive la web)</label>
+      <input class="form-control mono" name="rutaBase" value="${esc(valores.rutaBase || '')}"
+             placeholder="/remotemongo — vacío es la raíz del dominio">
+      <div class="tenue mt-1" style="font-size:.85rem">Si la vas a publicar en
+        <span class="mono">https://tu-dominio/remotemongo/</span>, escribe <span class="mono">/remotemongo</span>.
+        Todos los enlaces, la API y los endpoints de las apps se adaptan solos. Nunca uses rutas absolutas
+        que se salgan de aquí: el servidor no las acepta.</div>
 
       <h2 class="mt-4">Cuenta de administración</h2>
       <label class="form-label">Usuario</label>
@@ -91,11 +104,11 @@ export function instalar({ valores = {}, error = '', paso = 'formulario' } = {})
       <input class="form-control" type="password" name="clave2" required minlength="8">
       <button class="btn btn-primary mt-3">Instalar</button>
     </form>
-  </div>`);
+  </div>`, { raiz });
 }
 
 /* ------------------------------------------------------------------ entrada */
-export function entrar({ error = '', abierto = true, aviso = '' } = {}) {
+export function entrar({ error = '', abierto = true, aviso = '', raiz = '' } = {}) {
   return pagina('Entrar', `<div class="tarjeta">
     <h1>Entrar</h1>
     ${aviso ? `<div class="alert alert-success py-2">${esc(aviso)}</div>` : ''}
@@ -108,10 +121,10 @@ export function entrar({ error = '', abierto = true, aviso = '' } = {}) {
       <button class="btn btn-primary mt-3">Entrar</button>
     </form>
     ${abierto ? '<p class="mt-3 tenue">¿No tienes cuenta? <a href="/alta">Crear una</a></p>' : ''}
-  </div>`);
+  </div>`, { raiz });
 }
 
-export function alta({ abierto = true, error = '', creada = null } = {}) {
+export function alta({ abierto = true, error = '', creada = null, raiz = '' } = {}) {
   if (creada) {
     return pagina('Cuenta creada', `<div class="tarjeta">
       <h1>Cuenta creada</h1>
@@ -121,12 +134,12 @@ export function alta({ abierto = true, error = '', creada = null } = {}) {
       <p class="mt-3 mb-1">Endpoint</p>
       <div class="dato mono">${esc(creada.endpoint)}</div>
       <a class="btn btn-primary mt-3" href="/panel">Ir a mi panel</a>
-    </div>`);
+    </div>`, { raiz });
   }
   if (!abierto) {
     return pagina('Registro cerrado', `<div class="tarjeta"><h1>Registro cerrado</h1>
       <p class="tenue">Este servidor no acepta cuentas nuevas ahora mismo.</p>
-      <a class="btn btn-secondary" href="/entrar">Entrar</a></div>`);
+      <a class="btn btn-secondary" href="/entrar">Entrar</a></div>`, { raiz });
   }
   return pagina('Crear cuenta', `<div class="tarjeta">
     <h1>Crear cuenta</h1>
@@ -140,7 +153,7 @@ export function alta({ abierto = true, error = '', creada = null } = {}) {
       <button class="btn btn-primary mt-3">Crear cuenta</button>
     </form>
     <p class="mt-3 tenue">¿Ya la tienes? <a href="/entrar">Entrar</a></p>
-  </div>`);
+  </div>`, { raiz });
 }
 
 /* ------------------------------------------------- paneles (Vue 3, sin build) */
@@ -162,7 +175,7 @@ const fecha = (s) => String(s || '').slice(0, 10);
 `;
 
 /** Panel de cada persona. Los datos llegan de /api/panel; las acciones son formularios. */
-export function panelUsuario({ rol = 'usuario' } = {}) {
+export function panelUsuario({ rol = 'usuario', raiz = '' } = {}) {
   const nav = `${rol === 'admin' ? '<a href="/admin">Administración</a> · ' : ''}<a href="/salir">Salir</a>`;
   return pagina('Mi panel', `
     ${VUE}
@@ -225,11 +238,11 @@ export function panelUsuario({ rol = 'usuario' } = {}) {
       },
     }).mount('#app');
     </script>`,
-  { nav });
+  { nav, raiz });
 }
 
 /** Administración: solo metadatos. Datos de /api/admin; acciones por formulario. */
-export function panelAdmin({ error = '' } = {}) {
+export function panelAdmin({ error = '', raiz = '' } = {}) {
   return pagina('Administración', `
     ${VUE}
     <div id="app">
@@ -336,11 +349,11 @@ export function panelAdmin({ error = '' } = {}) {
       },
     }).mount('#app');
     </script>`,
-  { nav: '<a href="/panel">Mi panel</a> · <a href="/salir">Salir</a>' });
+  { nav: '<a href="/panel">Mi panel</a> · <a href="/salir">Salir</a>', raiz });
 }
 
 /* ------------------------------------------------------------- permiso OAuth */
-export function permiso({ usuario, scope, permisos, app, redirect, estado, reto, metodo }) {
+export function permiso({ usuario, scope, permisos, app, redirect, estado, reto, metodo, raiz = '' }) {
   return pagina('Permiso', `<div class="tarjeta">
     <h1>Permiso para ${esc(app)}</h1>
     <p class="tenue">La aplicación quiere acceder a tu cuenta <strong>${esc(usuario)}</strong> en:</p>
@@ -357,12 +370,12 @@ export function permiso({ usuario, scope, permisos, app, redirect, estado, reto,
       <button class="btn btn-primary mt-3">Permitir</button>
       <a class="btn btn-link" href="/">Cancelar</a>
     </form>
-  </div>`);
+  </div>`, { raiz });
 }
 
-export function avisoPagina({ titulo, texto, enlace = '/', boton = 'Volver' }) {
+export function avisoPagina({ titulo, texto, enlace = '/', boton = 'Volver', raiz = '' }) {
   return pagina(titulo, `<div class="tarjeta"><h1>${esc(titulo)}</h1>
-    <p class="tenue">${esc(texto)}</p><a class="btn btn-primary" href="${enlace}">${boton}</a></div>`);
+    <p class="tenue">${esc(texto)}</p><a class="btn btn-primary" href="${enlace}">${boton}</a></div>`, { raiz });
 }
 
 export { kb, esc };

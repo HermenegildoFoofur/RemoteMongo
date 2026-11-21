@@ -12,7 +12,9 @@ import {
   claveCorrecta, crearSal, hashClave, nuevoToken, permisosLegibles, pkceCorrecto, usuarioValido,
 } from './cuentas.js';
 import { cookieDe, crearSesion, leerSesion } from './sesiones.js';
-import { guardarAjustes, guardarInstalacion, leerInstalacion, claveDeCifrado, CUOTA_BASE } from './instalacion.js';
+import {
+  guardarAjustes, guardarInstalacion, leerInstalacion, claveDeCifrado, normalizarRutaBase, CUOTA_BASE,
+} from './instalacion.js';
 import { crearCifrador, nuevaClave } from './cifrado.js';
 import {
   alta, avisoPagina, entrar, instalar, panelAdmin, panelUsuario, permiso, redirigir, respuesta,
@@ -48,6 +50,13 @@ async function leerCuerpo(req, limite = 8 * 1024 * 1024) {
 
 const form = (cuerpo) => Object.fromEntries(new URLSearchParams(cuerpo.toString('utf8')));
 
+/** Ruta de instalación del formulario, saneada: «remotemongo/» → «/remotemongo». */
+function rutaValida(valor) {
+  const v = String(valor ?? '').trim();
+  if (!v || v === '/') return '';
+  return normalizarRutaBase(`/${v.replace(/^\/+/, '').replace(/\/+$/, '')}`);
+}
+
 /**
  * @param {object} opciones
  * @param {object} opciones.almacen            almacén listo (memoria en las pruebas)
@@ -60,8 +69,13 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
     ...config,
     dominio: config.dominio || `localhost:${config.puerto || 8790}`,
     cuotaBase: Number(config.cuotaBase) || CUOTA_BASE,
+    rutaBase: normalizarRutaBase(config.rutaBase),
   };
   const base = () => `${ajustes.https ? 'https' : 'http'}://${ajustes.dominio}`;
+  /** Ruta de instalación normalizada: '' (raíz) o algo como '/remotemongo'. */
+  const raiz = () => normalizarRutaBase(ajustes.rutaBase);
+  /** URL interna con la ruta de instalación delante. */
+  const con = (ruta) => `${raiz()}${ruta}`;
 
   /** Cuota que se le aplica a una cuenta: la suya si la tiene, si no la base del servidor. */
   const cuotaDe = async (usuario) => {
@@ -84,6 +98,13 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, base());
 
+    // La ruta de instalación se acepta con prefijo o sin él: así también funciona
+    // detrás de un proxy que la quita (tailscale serve --set-path, nginx, etc.).
+    const pre = raiz();
+    let camino = url.pathname;
+    if (pre && camino.startsWith(`${pre}/`)) camino = camino.slice(pre.length);
+    else if (pre && camino === pre) camino = '/';
+
     if (req.method === 'OPTIONS') {
       res.writeHead(204, CABECERAS_CORS);
       return res.end();
@@ -91,10 +112,10 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
 
     try {
       /* ------------------------------------------------------------- estático */
-      if (url.pathname === '/bootstrap.min.css' || url.pathname === '/vue.global.prod.js') {
+      if (camino === '/bootstrap.min.css' || camino === '/vue.global.prod.js') {
         const { readFileSync } = await import('node:fs');
-        const fichero = url.pathname === '/bootstrap.min.css' ? 'bootstrap.min.css' : 'vue.global.prod.js';
-        const tipo = url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript';
+        const fichero = camino === '/bootstrap.min.css' ? 'bootstrap.min.css' : 'vue.global.prod.js';
+        const tipo = camino.endsWith('.css') ? 'text/css' : 'text/javascript';
         try {
           const contenido = readFileSync(new URL(`../web/${fichero}`, import.meta.url));
           res.writeHead(200, { 'Content-Type': `${tipo}; charset=utf-8`, 'Cache-Control': 'public, max-age=86400' });
@@ -107,22 +128,24 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
 
       /* -------------------------------------------------- instalación inicial */
       if (!ajustes.configurado) {
-        if (url.pathname === '/instalar' && req.method === 'GET') {
-          return respuesta(res, 200, instalar({
+        if (camino === '/instalar' && req.method === 'GET') {
+          return respuesta(res, 200, instalar({ raiz: raiz(),
             valores: {
               mongoUrl: ajustes.mongoUrl, mongoDb: ajustes.mongoDb,
-              dominio: ajustes.dominio, https: ajustes.https,
+              dominio: ajustes.dominio, https: ajustes.https, rutaBase: ajustes.rutaBase,
             },
           }));
         }
-        if (url.pathname === '/instalar' && req.method === 'POST') {
+        if (camino === '/instalar' && req.method === 'POST') {
           const datos = form(await leerCuerpo(req));
-          const volver = (error) => respuesta(res, 400, instalar({
-            error, valores: { ...datos, https: datos.https === 'on' },
+          const volver = (error) => respuesta(res, 400, instalar({ raiz: raiz(),
+            error, valores: { ...datos, rutaBase: datos.rutaBase, https: datos.https === 'on' },
           }));
           if (!datos.mongoUrl || !datos.dominio) return volver('Faltan la ruta de MongoDB o el dominio.');
           if (!usuarioValido(datos.admin)) return volver('Usuario de administración no válido (minúsculas, 2-32 caracteres).');
           if (!datos.clave || String(datos.clave).length < 8) return volver('La contraseña debe tener al menos 8 caracteres.');
+          const rutaMal = datos.rutaBase && !/^\/?[a-z0-9][a-z0-9._-]*$/i.test(String(datos.rutaBase).trim().replace(/\/$/, ''));
+          if (rutaMal) return volver('La ruta de instalación solo puede llevar letras, números, guiones y puntos (por ejemplo /remotemongo).');
           if (datos.clave !== datos.clave2) return volver('Las dos contraseñas no coinciden.');
           if (!conectarMongo) return volver('Este servidor no puede conectar con MongoDB.');
 
@@ -140,24 +163,25 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
             https: datos.https === 'on',
             puerto: ajustes.puerto,
             claveCifrado: clave,
+            rutaBase: rutaValida(datos.rutaBase),
           });
           Object.assign(ajustes, {
             configurado: true, dominio: instalacion.dominio, https: instalacion.https,
             secreto: instalacion.secreto, mongoUrl: datos.mongoUrl, mongoDb: instalacion.mongoDb,
-            cifrado: true,
+            cifrado: true, rutaBase: instalacion.rutaBase,
           });
           almacen = nuevo;   // desde aquí todo (datos y cuentas) va contra Mongo
           const sal = crearSal();
           await almacen.crearUsuario({
             usuario: String(datos.admin).toLowerCase(), hash: hashClave(datos.clave, sal), sal, rol: 'admin',
           });
-          return respuesta(res, 200, instalar({ paso: 'hecho' }));
+          return respuesta(res, 200, instalar({ raiz: raiz(), paso: 'hecho' }));
         }
-        return redirigir(res, '/instalar');
+        return redirigir(res, con('/instalar'));
       }
 
       /* ------------------------------------------------------ descubrimiento */
-      if (url.pathname === '/.well-known/webfinger') {
+      if (camino === '/.well-known/webfinger') {
         const recurso = url.searchParams.get('resource') || '';
         const m = /^acct:([a-z0-9._-]+)@/i.exec(recurso);
         const usuario = m ? m[1].toLowerCase() : '';
@@ -168,20 +192,20 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           links: [
             {
               rel: 'remoteStorage',
-              href: `${base()}/storage/${usuario}/`,
+              href: `${base()}${con(`/storage/${usuario}/`)}`,
               properties: { 'http://remotestorage.io/spec/version': 'draft-dejong-remotestorage-22' },
             },
-            { rel: 'http://tools.ietf.org/id/draft-dejong-remotestorage', href: `${base()}/oauth/${usuario}`, properties: {} },
+            { rel: 'http://tools.ietf.org/id/draft-dejong-remotestorage', href: `${base()}${con(`/oauth/${usuario}`)}`, properties: {} },
           ],
         });
       }
 
       /* --------------------------------------------------- permiso de una app */
-      if (url.pathname.startsWith('/oauth/') && url.pathname !== '/oauth/token') {
-        const usuario = url.pathname.split('/')[2];
+      if (camino.startsWith('/oauth/') && camino !== '/oauth/token') {
+        const usuario = camino.split('/')[2];
         const cuenta = usuario && await almacen.usuario(usuario);
         if (!cuenta) {
-          return respuesta(res, 404, avisoPagina({
+          return respuesta(res, 404, avisoPagina({ raiz: raiz(),
             titulo: 'Esa cuenta no existe',
             texto: 'Revisa la dirección que has puesto en la app.',
             enlace: '/', boton: 'Inicio',
@@ -192,13 +216,13 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           const scope = url.searchParams.get('scope') || '';
           const permisos = permisosLegibles(scope);
           if (!permisos.length) {
-            return respuesta(res, 400, avisoPagina({
+            return respuesta(res, 400, avisoPagina({ raiz: raiz(),
               titulo: 'Permisos no válidos',
               texto: 'La aplicación no ha pedido ningún permiso válido.',
               enlace: '/', boton: 'Inicio',
             }));
           }
-          return respuesta(res, 200, permiso({
+          return respuesta(res, 200, permiso({ raiz: raiz(),
             usuario, scope, permisos,
             app: url.searchParams.get('client_id') || 'una aplicación',
             redirect: url.searchParams.get('redirect_uri') || '',
@@ -211,7 +235,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         if (req.method === 'POST') {
           const datos = form(await leerCuerpo(req));
           if (!claveCorrecta(datos.clave || '', cuenta)) {
-            return respuesta(res, 401, avisoPagina({
+            return respuesta(res, 401, avisoPagina({ raiz: raiz(),
               titulo: 'Contraseña incorrecta',
               texto: 'No se ha concedido el permiso.',
               enlace: '/entrar', boton: 'Entrar',
@@ -219,7 +243,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           }
           const scopes = analizarScopes(datos.scope);
           if (!scopes.length) {
-            return respuesta(res, 400, avisoPagina({
+            return respuesta(res, 400, avisoPagina({ raiz: raiz(),
               titulo: 'Permisos no válidos', texto: 'No se ha concedido nada.',
               enlace: '/', boton: 'Inicio',
             }));
@@ -244,7 +268,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         }
       }
 
-      if (url.pathname === '/oauth/token' && req.method === 'POST') {
+      if (camino === '/oauth/token' && req.method === 'POST') {
         const datos = form(await leerCuerpo(req));
         if (datos.grant_type !== 'authorization_code') return json(res, 400, { error: 'unsupported_grant_type' });
         const guardado = codigos.get(datos.code);
@@ -262,11 +286,11 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       }
 
       /* --------------------------------------------------------------- almacén */
-      if (url.pathname.startsWith('/storage/')) {
-        const resto = url.pathname.slice('/storage/'.length);
+      if (camino.startsWith('/storage/')) {
+        const resto = camino.slice('/storage/'.length);
         const barra = resto.indexOf('/');
         const usuario = decodeURIComponent(barra === -1 ? resto : resto.slice(0, barra)).toLowerCase();
-        const ruta = normal(barra === -1 ? '' : resto.slice(barra + 1), url.pathname.endsWith('/'));
+        const ruta = normal(barra === -1 ? '' : resto.slice(barra + 1), camino.endsWith('/'));
 
         const token = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '')?.[1];
         const datosToken = token ? await almacen.token(token) : null;
@@ -279,7 +303,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           return json(res, 403, { error: 'el permiso no alcanza a esa carpeta' });
         }
 
-        const esCarpeta = url.pathname.endsWith('/') || ruta === '';
+        const esCarpeta = camino.endsWith('/') || ruta === '';
 
         if (req.method === 'GET' || req.method === 'HEAD') {
           if (esCarpeta) {
@@ -338,54 +362,54 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       }
 
       /* ----------------------------------------------------------- entrar / salir */
-      if (url.pathname === '/entrar') {
+      if (camino === '/entrar') {
         if (req.method === 'GET') {
-          return respuesta(res, 200, entrar({
+          return respuesta(res, 200, entrar({ raiz: raiz(),
             abierto: ajustes.registroAbierto, aviso: url.searchParams.get('aviso') || '',
           }));
         }
         const datos = form(await leerCuerpo(req));
         const cuenta = await almacen.usuario(String(datos.usuario || '').toLowerCase());
         if (!cuenta || !claveCorrecta(datos.clave || '', cuenta)) {
-          return respuesta(res, 401, entrar({ abierto: ajustes.registroAbierto, error: 'Usuario o contraseña incorrectos.' }));
+          return respuesta(res, 401, entrar({ raiz: raiz(), abierto: ajustes.registroAbierto, error: 'Usuario o contraseña incorrectos.' }));
         }
         if (cuenta.activo === false) {
-          return respuesta(res, 403, entrar({ abierto: ajustes.registroAbierto, error: 'Esa cuenta está desactivada.' }));
+          return respuesta(res, 403, entrar({ raiz: raiz(), abierto: ajustes.registroAbierto, error: 'Esa cuenta está desactivada.' }));
         }
         const sesion = crearSesion(ajustes.secreto, cuenta.usuario, cuenta.rol || 'usuario');
         res.writeHead(302, conCookie(cookieDe(sesion, { seguro: ajustes.https }), {
-          Location: cuenta.rol === 'admin' ? '/admin' : '/panel',
+          Location: cuenta.rol === 'admin' ? con('/admin') : con('/panel'),
         }));
         return res.end();
       }
 
-      if (url.pathname === '/salir') {
+      if (camino === '/salir') {
         res.writeHead(302, conCookie(cookieDe('', { seguro: ajustes.https, borrar: true }), { Location: '/entrar' }));
         return res.end();
       }
 
       /* ------------------------------------------------------------ alta de cuenta */
-      if (url.pathname === '/alta') {
-        if (req.method === 'GET') return respuesta(res, 200, alta({ abierto: ajustes.registroAbierto }));
-        if (!ajustes.registroAbierto) return respuesta(res, 403, alta({ abierto: false }));
+      if (camino === '/alta') {
+        if (req.method === 'GET') return respuesta(res, 200, alta({ raiz: raiz(), abierto: ajustes.registroAbierto }));
+        if (!ajustes.registroAbierto) return respuesta(res, 403, alta({ raiz: raiz(), abierto: false }));
         const datos = form(await leerCuerpo(req));
         const nombre = String(datos.usuario || '').toLowerCase().trim();
-        if (!usuarioValido(nombre)) return respuesta(res, 400, alta({ abierto: true, error: 'Usuario no válido.' }));
+        if (!usuarioValido(nombre)) return respuesta(res, 400, alta({ raiz: raiz(), abierto: true, error: 'Usuario no válido.' }));
         if (!datos.clave || String(datos.clave).length < 8) {
-          return respuesta(res, 400, alta({ abierto: true, error: 'La contraseña debe tener al menos 8 caracteres.' }));
+          return respuesta(res, 400, alta({ raiz: raiz(), abierto: true, error: 'La contraseña debe tener al menos 8 caracteres.' }));
         }
-        if (await almacen.usuario(nombre)) return respuesta(res, 409, alta({ abierto: true, error: 'Ese usuario ya existe.' }));
+        if (await almacen.usuario(nombre)) return respuesta(res, 409, alta({ raiz: raiz(), abierto: true, error: 'Ese usuario ya existe.' }));
         const sal = crearSal();
         await almacen.crearUsuario({ usuario: nombre, hash: hashClave(datos.clave, sal), sal, rol: 'usuario' });
         const sesion = crearSesion(ajustes.secreto, nombre, 'usuario');
         res.writeHead(200, conCookie(cookieDe(sesion, { seguro: ajustes.https })));
-        return res.end(alta({
-          creada: { direccion: `${nombre}@${ajustes.dominio}`, endpoint: `${base()}/storage/${nombre}/` },
+        return res.end(alta({ raiz: raiz(),
+          creada: { direccion: `${nombre}@${ajustes.dominio}`, endpoint: `${base()}${con(`/storage/${nombre}/`)}` },
         }));
       }
 
       /* -------------------------------------------------- datos de los paneles */
-      if (url.pathname === '/api/panel') {
+      if (camino === '/api/panel') {
         const cuenta = await sesionDe(req);
         if (!cuenta) return json(res, 401, { error: 'sin sesión' });
         const m = await almacen.resumenMetadatos(cuenta.usuario);
@@ -393,7 +417,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           usuario: cuenta.usuario,
           rol: cuenta.rol || 'usuario',
           dominio: ajustes.dominio,
-          endpoint: `${base()}/storage/${cuenta.usuario}/`,
+          endpoint: `${base()}${con(`/storage/${cuenta.usuario}/`)}`,
           apps: m.apps,
           categorias: m.categorias,
           usado: m.totalBytes,
@@ -401,7 +425,7 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         });
       }
 
-      if (url.pathname === '/api/admin') {
+      if (camino === '/api/admin') {
         const cuenta = await sesionDe(req);
         if (!soloAdmin(cuenta)) return json(res, 403, { error: 'solo administración' });
         const lista = await almacen.listarUsuarios();
@@ -426,23 +450,23 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       }
 
       /* -------------------------------------------------------- panel de usuario */
-      if (url.pathname === '/panel') {
+      if (camino === '/panel') {
         const cuenta = await sesionDe(req);
-        if (!cuenta) return redirigir(res, '/entrar');
-        return respuesta(res, 200, panelUsuario({ rol: cuenta.rol || 'usuario' }));
+        if (!cuenta) return redirigir(res, con('/entrar'));
+        return respuesta(res, 200, panelUsuario({ raiz: raiz(), rol: cuenta.rol || 'usuario' }));
       }
 
-      if (url.pathname === '/panel/revocar' && req.method === 'POST') {
+      if (camino === '/panel/revocar' && req.method === 'POST') {
         const cuenta = await sesionDe(req);
-        if (!cuenta) return redirigir(res, '/entrar');
+        if (!cuenta) return redirigir(res, con('/entrar'));
         const datos = form(await leerCuerpo(req));
         await almacen.revocarToken(cuenta.usuario, datos.id || datos.token);
-        return redirigir(res, '/panel');
+        return redirigir(res, con('/panel'));
       }
 
-      if (url.pathname === '/panel/respaldo') {
+      if (camino === '/panel/respaldo') {
         const cuenta = await sesionDe(req);
-        if (!cuenta) return redirigir(res, '/entrar');
+        if (!cuenta) return redirigir(res, con('/entrar'));
         const documentos = (await almacen.todoDe?.(cuenta.usuario)) || [];
         return json(res, 200, { usuario: cuenta.usuario, fecha: new Date().toISOString(), documentos }, {
           'Content-Disposition': `attachment; filename="remotemongo-${cuenta.usuario}.json"`,
@@ -450,10 +474,10 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
       }
 
       /* ----------------------------------------------------------- administración */
-      if (url.pathname.startsWith('/admin')) {
+      if (camino.startsWith('/admin')) {
         const cuenta = await sesionDe(req);
         if (!soloAdmin(cuenta)) {
-          return respuesta(res, 403, avisoPagina({
+          return respuesta(res, 403, avisoPagina({ raiz: raiz(),
             titulo: 'Solo administración',
             texto: 'Esta zona es solo para la cuenta de administración.',
             enlace: '/panel', boton: 'Mi panel',
@@ -461,37 +485,37 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
         }
         if (req.method === 'POST') {
           const datos = form(await leerCuerpo(req));
-          if (url.pathname === '/admin/revocar') {
+          if (camino === '/admin/revocar') {
             await almacen.revocarToken(datos.usuario, datos.id || datos.token);
-            return redirigir(res, '/admin');
+            return redirigir(res, con('/admin'));
           }
-          if (url.pathname === '/admin/estado') {
+          if (camino === '/admin/estado') {
             await almacen.cambiarEstado(datos.usuario, datos.activo === '1');
-            return redirigir(res, '/admin');
+            return redirigir(res, con('/admin'));
           }
-          if (url.pathname === '/admin/registro') {
+          if (camino === '/admin/registro') {
             ajustes.registroAbierto = datos.abierto === '1';
             guardarAjustes({ registroAbierto: ajustes.registroAbierto });
-            return redirigir(res, '/admin');
+            return redirigir(res, con('/admin'));
           }
-          if (url.pathname === '/admin/cuota') {
+          if (camino === '/admin/cuota') {
             // En MB. Vacío o «base» = quitar la cuota propia y usar la del servidor.
             const valor = String(datos.mb || '').trim().replace(',', '.');
             if (!valor || valor.toLowerCase() === 'base') {
               await almacen.cambiarCuota(datos.usuario, null);
-              return redirigir(res, '/admin');
+              return redirigir(res, con('/admin'));
             }
             const mb = Number(valor);
-            if (!Number.isFinite(mb) || mb <= 0) return redirigir(res, '/admin?error=cuota');
+            if (!Number.isFinite(mb) || mb <= 0) return redirigir(res, con('/admin?error=cuota'));
             await almacen.cambiarCuota(datos.usuario, Math.round(mb * 1024 * 1024));
-            return redirigir(res, '/admin');
+            return redirigir(res, con('/admin'));
           }
-          if (url.pathname === '/admin/cuota-base') {
+          if (camino === '/admin/cuota-base') {
             const mb = Number(String(datos.mb || '').trim().replace(',', '.'));
-            if (!Number.isFinite(mb) || mb <= 0) return redirigir(res, '/admin?error=cuota');
+            if (!Number.isFinite(mb) || mb <= 0) return redirigir(res, con('/admin?error=cuota'));
             ajustes.cuotaBase = Math.round(mb * 1024 * 1024);
             guardarAjustes({ cuotaBase: ajustes.cuotaBase });
-            return redirigir(res, '/admin');
+            return redirigir(res, con('/admin'));
           }
         }
         const lista = await almacen.listarUsuarios();
@@ -505,17 +529,17 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
             cuotaPropia: u.cuota != null,
           });
         }
-        return respuesta(res, 200, panelAdmin({
+        return respuesta(res, 200, panelAdmin({ raiz: raiz(),
           error: url.searchParams.get('error') === 'cuota'
             ? 'Esa cuota no vale: pon un número de MB mayor que cero.' : '',
         }));
       }
 
       /* ---------------------------------------------------------------- portada */
-      if (url.pathname === '/') {
+      if (camino === '/') {
         const cuenta = await sesionDe(req);
-        if (!cuenta) return redirigir(res, '/entrar');
-        return redirigir(res, cuenta.rol === 'admin' ? '/admin' : '/panel');
+        if (!cuenta) return redirigir(res, con('/entrar'));
+        return redirigir(res, cuenta.rol === 'admin' ? con('/admin') : con('/panel'));
       }
 
       return json(res, 404, { error: 'ruta desconocida' });
