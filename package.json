@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "description": "Servidor remoteStorage con MongoDB por detrás: cada usuario tiene su dirección y sus apps hablan con él con permisos por carpeta",
   "type": "module",
-  "main": "src/server.js",
+  "main": "src/servidor.js",
   "engines": { "node": ">=20" },
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node src/servidor.js",
     "test": "node --test"
   },
   "keywords": ["remotestorage", "mongodb", "unhosted", "personal-data"],

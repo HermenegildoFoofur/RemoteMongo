@@ -1,16 +1,16 @@
 /** Pruebas del protocolo contra el servidor real, con almacén en memoria. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { crearServidor } from '../src/server.js';
+import { crearServidor } from '../src/servidor.js';
 import { AlmacenMemoria, etagDe } from '../src/store.js';
 import { analizarScopes, permite } from '../src/scopes.js';
 import { analizarScope } from '../src/scopes.js';
 
-const config = { dominio: 'datos.test', https: false, registroAbierto: true, adminToken: 'secreto' };
+const config = { configurado: true, dominio: 'datos.test', https: false, registroAbierto: true, secreto: 'secreto-de-pruebas' };
 
 async function arrancar() {
   const almacen = await AlmacenMemoria.preparar();
-  const servidor = crearServidor(almacen, config);
+  const servidor = crearServidor({ almacen, config });
   await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${servidor.address().port}`;
   return { servidor, almacen, base, cerrar: () => new Promise((r) => servidor.close(r)) };

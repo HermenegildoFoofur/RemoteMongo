@@ -15,9 +15,25 @@ y puedes revocar.
           └──PUT/GET /storage/adela/quemo/…──▶ MongoDB
 ```
 
+## Primera vez: el asistente (como WordPress)
+
+Arrancas el servidor y, si no está configurado, **todo lleva a `/instalar`**. Ahí se pide, una
+sola vez:
+
+- **la ruta a MongoDB** (con credenciales si las tiene) y el nombre de la base,
+- el **dominio público** —lo que va detrás de la `@` de cada usuario— y si va detrás de TLS,
+- la **cuenta de administración** (usuario y contraseña).
+
+Se comprueba la conexión a Mongo, se guarda en `state/instalacion.json` (permisos `600`, porque
+la conexión no puede vivir dentro de la propia base) con un secreto aleatorio para las sesiones,
+y se crea el administrador.
+
+Después, la entrada es **`/entrar`** (login) y **`/alta`** (crear cuenta, si el registro está
+abierto).
+
 ## El flujo, en corto
 
-1. **Te das de alta** en la web del servidor. Te da dos cosas:
+1. **Te das de alta** y el servidor te da dos cosas:
    - tu **dirección**: `adela@remotemongo.midominio.net` (con forma de correo, es lo que se
      da a las apps),
    - tu **endpoint**: `https://remotemongo.midominio.net/storage/adela/` (para apps que no
@@ -31,6 +47,21 @@ y puedes revocar.
 
 No hay «crear una colección a mano»: la carpeta nace con el primer `PUT`, y el permiso lo
 define lo que la app pide en el OAuth.
+
+## Paneles
+
+**`/panel` (cada usuario).** Su dirección y su endpoint, las **apps conectadas** con su permiso
+y botón de desconectar, y lo que ocupa por categoría. Incluye **«Descargar copia»**, que baja
+todos sus documentos en JSON.
+
+**`/admin` (solo la cuenta de administración).** Lista de cuentas con **estado**, número de
+**apps conectadas** y **espacio ocupado**; puede **desconectar apps de cualquier usuario**,
+**activar o desactivar cuentas** y **abrir o cerrar el registro**.
+
+Y lo importante: por ahí **no se puede leer ningún dato de nadie**. El panel solo consulta
+metadatos (recuentos y tamaños); el contenido de las cuentas no se sirve ni con sesión de
+administración. El administrador tiene su propio almacén como cualquier usuario, en `/panel`.
+
 
 ## La API que exponen las apps
 
@@ -60,8 +91,12 @@ Todo por entorno o en un `.env` al lado del proyecto (ver `.env.example`):
 | `RM_HTTPS` | `si` | `si` cuando va detrás de un proxy con TLS |
 | **`RM_MONGO_URL`** | `mongodb://127.0.0.1:27017` | **la ruta a MongoDB** |
 | **`RM_MONGO_DB`** | `remotemongo` | **base donde se guardan los datos** |
-| `RM_REGISTRO` | `si` | permite abrir cuenta desde la web (`no` para cerrarlo) |
-| `RM_ADMIN_TOKEN` | — | clave para `/panel` y `/respaldo/<usuario>` |
+| `RM_REGISTRO` | `si` | registro abierto o cerrado (también se cambia desde `/admin`) |
+
+Las variables **son opcionales cuando usas el asistente**: escribe la ruta de Mongo en
+`/instalar` y queda guardada en `state/instalacion.json`. Si defines `RM_MONGO_URL`,
+`RM_DOMINIO` y `RM_SECRETO`, el servidor arranca ya configurado y se salta el asistente
+(útil en Docker).
 
 Con credenciales, la ruta de Mongo lleva usuario y base de autenticación:
 
@@ -98,12 +133,14 @@ fragmento del token lo exigen.
 
 ## Estado
 
-Primera versión funcional: alta de cuentas, descubrimiento, OAuth con PKCE (y flujo clásico),
-almacén con ETags y listados, panel de administración y respaldo por usuario.
+Primera versión funcional: **asistente de instalación**, entrada y alta de cuentas, sesiones
+por cookie firmada, descubrimiento, OAuth con PKCE (y flujo clásico), almacén con ETags y
+listados, **panel de usuario** (apps conectadas, consumo, respaldo) y **panel de
+administración solo con metadatos** (apps, espacio, desconectar apps, activar/desactivar
+cuentas, abrir o cerrar el registro).
 
 Pendiente y conocido:
 - Subida en streaming y GridFS para documentos grandes.
-- Panel de usuario (no solo administración) para ver y revocar las apps conectadas.
 - `remotestorage.js` de punta a punta contra este servidor desde una app real.
 - Suite de conformidad del protocolo (`rs.js` spec-check).
 

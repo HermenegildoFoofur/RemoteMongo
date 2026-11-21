@@ -103,11 +103,39 @@ export class AlmacenMongo {
   }
 
   /* --------------------------------------------------------------- usuarios */
-  async crearUsuario({ usuario, hash, sal }) {
+  async crearUsuario({ usuario, hash, sal, rol = 'usuario' }) {
     await this.usuarios.insertOne({
-      usuario, hash, sal, creado: new Date().toISOString(), activo: true,
+      usuario, hash, sal, rol, creado: new Date().toISOString(), activo: true,
     });
-    return { usuario };
+    return { usuario, rol };
+  }
+
+  /** Lista de cuentas para el panel: sin hash ni sal (el admin no ve credenciales). */
+  async listarUsuarios() {
+    return this.usuarios
+      .find({}, { projection: { hash: 0, sal: 0 } })
+      .sort({ creado: 1 })
+      .toArray();
+  }
+
+  async cambiarEstado(usuario, activo) {
+    const r = await this.usuarios.updateOne({ usuario }, { $set: { activo: Boolean(activo) } });
+    return r.modifiedCount > 0;
+  }
+
+  /** Solo metadatos: cuántas apps y cuánto ocupa cada categoría. Nunca el contenido. */
+  async resumenMetadatos(usuario) {
+    const [tokens, uso] = await Promise.all([
+      this.tokens.find({ usuario }, { projection: { token: 1, scope: 1, app: 1, creado: 1 } }).toArray(),
+      this.uso(usuario),
+    ]);
+    const bytes = uso.reduce((s, c) => s + c.bytes, 0);
+    return {
+      usuario,
+      apps: tokens.map((t) => ({ token: t.token, app: t.app, scope: t.scope, creado: t.creado })),
+      categorias: uso,
+      totalBytes: bytes,
+    };
   }
 
   async usuario(nombre) {
@@ -139,6 +167,15 @@ export class AlmacenMongo {
   async revocarToken(usuario, valor) {
     const r = await this.tokens.deleteOne({ usuario, token: valor });
     return r.deletedCount > 0;
+  }
+
+  /** Todos los documentos de un usuario, para su copia de seguridad. */
+  async todoDe(usuario) {
+    const docs = await this.docs.find({ usuario, carpeta: false }).toArray();
+    return docs.map((d) => ({
+      path: d.path, tipo: d.tipo, etag: d.etag, fecha: d.fecha,
+      contenido: Buffer.from(d.cuerpo.buffer ?? d.cuerpo).toString('base64'),
+    }));
   }
 
   /** Tamaño ocupado por cada categoría (la primera carpeta del path). */
@@ -225,7 +262,31 @@ export class AlmacenMemoria {
     return alguno ? { items, carpetas } : null;
   }
 
-  async crearUsuario(u) { this.usuarios.set(String(u.usuario).toLowerCase(), u); return u; }
+  async crearUsuario(u) {
+    const conRol = { rol: 'usuario', activo: true, ...u };
+    this.usuarios.set(String(conRol.usuario).toLowerCase(), conRol);
+    return conRol;
+  }
+  async listarUsuarios() {
+    return [...this.usuarios.values()].map(({ hash, sal, ...resto }) => resto);
+  }
+  async cambiarEstado(usuario, activo) {
+    const u = this.usuarios.get(String(usuario).toLowerCase());
+    if (!u) return false;
+    u.activo = Boolean(activo);
+    return true;
+  }
+  async resumenMetadatos(usuario) {
+    const uso = await this.uso(usuario);
+    const apps = [...this.tokens.values()].filter((t) => t.usuario === usuario)
+      .map((t) => ({ token: t.token, app: t.app, scope: t.scope, creado: t.creado }));
+    return {
+      usuario,
+      apps,
+      categorias: uso,
+      totalBytes: uso.reduce((s, c) => s + c.bytes, 0),
+    };
+  }
   async usuario(nombre) { return this.usuarios.get(String(nombre).toLowerCase()) || null; }
   async guardarToken(t) { this.tokens.set(t.token, t); return t.token; }
   async token(valor) { return this.tokens.get(valor) || null; }
@@ -235,6 +296,15 @@ export class AlmacenMemoria {
     if (!t || t.usuario !== usuario) return false;
     return this.tokens.delete(valor);
   }
+  async todoDe(usuario) {
+    return [...this.docs.values()]
+      .filter((d) => d.usuario === usuario && !d.carpeta)
+      .map((d) => ({
+        path: d.path, tipo: d.tipo, etag: d.etag, fecha: d.fecha,
+        contenido: Buffer.from(d.cuerpo).toString('base64'),
+      }));
+  }
+
   async uso(usuario) {
     const mapa = new Map();
     for (const d of this.docs.values()) {
