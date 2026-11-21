@@ -88,7 +88,7 @@ export function instalar({ valores = {}, error = '', paso = 'formulario', raiz =
     <div class="text-center mb-4 mb-md-5">
       <div class="display-6">⚙️</div>
       <h1 class="h3 mt-2 mb-1">Primera configuración</h1>
-      <p class="tenue mb-0">Como en WordPress: se rellena una vez y queda guardado en el servidor.</p>
+      <p class="tenue mb-0">Se rellena una vez y queda guardado en el servidor.</p>
     </div>
 
     ${error ? `<div class="alert alert-danger d-flex gap-2" role="alert">

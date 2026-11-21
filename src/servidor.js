@@ -1,6 +1,6 @@
 /** RemoteMongo — servidor remoteStorage sobre MongoDB.
  *
- *  Primera vez: asistente de instalación (como WordPress) para la ruta de Mongo, el dominio
+ *  Primera vez: asistente de instalación para la ruta de Mongo, el dominio
  *  y la cuenta de administración. Después: entrar / crear cuenta / panel de usuario, y un
  *  panel de administración que solo ve metadatos (apps y espacio), nunca el contenido.
  */

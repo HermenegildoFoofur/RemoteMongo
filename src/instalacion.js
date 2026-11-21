@@ -1,4 +1,4 @@
-/** Instalación del servidor: como WordPress, la primera vez se pide todo.
+/** Instalación del servidor: la primera vez se pide todo lo necesario.
  *
  *  La conexión a MongoDB no puede vivir dentro de MongoDB, así que se guarda en un
  *  fichero local (`state/instalacion.json`, permisos 600). Ahí van también el secreto

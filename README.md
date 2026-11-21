@@ -15,7 +15,7 @@ y puedes revocar.
           └──PUT/GET /storage/adela/quemo/…──▶ MongoDB
 ```
 
-## Primera vez: el asistente (como WordPress)
+## Primera vez: el asistente
 
 Arrancas el servidor y, si no está configurado, **todo lleva a `/instalar`**. Ahí se pide, una
 sola vez:
