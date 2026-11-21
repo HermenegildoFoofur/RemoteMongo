@@ -39,7 +39,7 @@ test('sin instalar, todo lleva al asistente', async () => {
   const { base, cerrar } = await arrancar({ ...configBase, configurado: false });
   const raiz = await fetch(`${base}/`, { redirect: 'manual' });
   assert.equal(raiz.status, 302);
-  assert.equal(raiz.headers.get('location'), '/instalar');
+  assert.equal(raiz.headers.get('location'), 'instalar', 'relativa, para funcionar también con prefijo');
   const asistente = await fetch(`${base}/instalar`);
   const html = await asistente.text();
   assert.match(html, /Primera configuración/);

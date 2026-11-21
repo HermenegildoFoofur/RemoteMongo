@@ -177,7 +177,9 @@ export function crearServidor({ almacen, config, conectarMongo = null }) {
           });
           return respuesta(res, 200, instalar({ raiz: raiz(), paso: 'hecho' }));
         }
-        return redirigir(res, con('/instalar'));
+        // sin instalar la ruta aún no se conoce: redirección relativa, que funciona
+        // igual en la raíz del dominio que detrás de un montaje con prefijo
+        return redirigir(res, ajustes.rutaBase ? con('/instalar') : 'instalar');
       }
 
       /* ------------------------------------------------------ descubrimiento */
