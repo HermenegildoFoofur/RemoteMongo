@@ -4,14 +4,25 @@
   "description": "Servidor remoteStorage con MongoDB por detrás: cada usuario tiene su dirección y sus apps hablan con él con permisos por carpeta",
   "type": "module",
   "main": "src/servidor.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/servidor.js",
     "test": "node --test"
   },
-  "keywords": ["remotestorage", "mongodb", "unhosted", "personal-data"],
+  "keywords": [
+    "remotestorage",
+    "mongodb",
+    "unhosted",
+    "personal-data"
+  ],
   "license": "MIT",
   "dependencies": {
     "mongodb": "^6.10.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.5",
+    "tailwindcss": "^4.3.5"
   }
 }
